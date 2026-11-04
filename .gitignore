@@ -1,0 +1,13 @@
+*.exe
+*.zip
+*.7z
+*.deb
+*.part
+__pycache__/
+.env
+.env.*
+creds.txt
+*.key
+*.pem
+*.token
+*.log

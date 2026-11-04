@@ -1,0 +1,15 @@
+[Unit]
+Description=Setotower Downloader Helper
+Requires=setotower-helper.socket
+After=setotower-helper.socket
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/setotower-helper/setotower-helper.py
+WorkingDirectory=%h/.local/share/setotower-helper
+NoNewPrivileges=true
+PrivateTmp=true
+Restart=no
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=journal
+StandardError=journal

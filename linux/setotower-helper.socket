@@ -1,0 +1,10 @@
+[Unit]
+Description=Setotower Downloader Helper socket
+
+[Socket]
+ListenStream=127.0.0.1:17843
+NoDelay=true
+Accept=no
+
+[Install]
+WantedBy=sockets.target
