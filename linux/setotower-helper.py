@@ -58,7 +58,7 @@ def is_cineb_page(url):
 
 def resolve_cineb(url, data=None):
     data = data or {}
-    request_data = {"url": url, "title": data.get("title", "Cineb download"), "type": data.get("media_type", data.get("type", "movie")), "season": data.get("season", 1), "episode": data.get("episode", 1)}
+    request_data = {"url": url, "title": data.get("title", ""), "type": data.get("media_type", data.get("type", "")), "season": data.get("season"), "episode": data.get("episode")}
     request = urllib.request.Request(BRIDGE, data=json.dumps(request_data).encode(), headers={"Content-Type": "application/json"}, method="POST")
     try:
         with urllib.request.urlopen(request, timeout=90) as response:
@@ -73,8 +73,9 @@ def resolve_cineb(url, data=None):
 
 def cineb_info(url, data=None):
     payload = resolve_cineb(url, data)
-    title = payload.get("filename", "Cineb download").rsplit(".", 1)[0]
-    return {"title": title, "thumbnail": None, "uploader": "Cineb", "duration": None, "engine": "cineb-hls", "video": [{"value": "best", "label": "Highest available MP4"}], "audio": [{"value": "best", "label": "Audio embedded in video"}]}
+    title = payload.get("displayTitle") or payload.get("title") or payload.get("filename", "Cineb download").rsplit(".", 1)[0]
+    resolutions = payload.get("videoResolutions") or [{"value": "best", "label": "Highest available MP4"}]
+    return {"title": title, "thumbnail": None, "uploader": "Cineb", "duration": None, "engine": "cineb-hls", "video": resolutions, "audio": [{"value": "best", "label": "Audio embedded in video"}]}
 
 def run_job(job, url, kind, quality, headers):
     global ACTIVE
@@ -91,6 +92,7 @@ def run_job(job, url, kind, quality, headers):
             payload = resolve_cineb(url, job.get("request", {})); source_url = payload["url"]; source_headers = payload.get("requestHeaders", {})
         if source_url.lower().split("?", 1)[0].endswith(".m3u8"):
             cmd = ["node", str(TOOLS / "cineb-hls.mjs"), "--url", source_url, "--output", str(output), "--headers-json", json.dumps(source_headers), "--ffmpeg", "ffmpeg", "--connections", "8"]
+            if quality.isdigit(): cmd += ["--max-height", quality]
         else:
             fmt = "bestaudio/best" if kind == "mp3" else (f"best[height<={quality}]/best" if quality.isdigit() else "best")
             cmd = ["yt-dlp", "--extractor-args", "youtube:player_client=android", "--no-playlist", "--newline", "--progress", "--print", "after_move:SETOTOWER_FILE:%(filepath)s", "-o", str(DEST / "%(title).150B [%(id)s].%(ext)s")]

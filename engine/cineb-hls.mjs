@@ -12,6 +12,7 @@ const sourceUrl = value("--url");
 const output = value("--output");
 const ffmpeg = value("--ffmpeg") || "ffmpeg";
 const headers = JSON.parse(value("--headers-json") || "{}");
+const maxHeight = Number(value("--max-height") || 0);
 const concurrency = Math.max(2, Math.min(12, Number(value("--connections") || 8)));
 if (!sourceUrl || !output) { console.error("Usage: cineb-hls.mjs --url URL --output FILE [--headers-json JSON] [--ffmpeg PATH]"); process.exit(2); }
 
@@ -35,10 +36,12 @@ function highestVariant(text, base) {
   for (let i = 0; i < lines.length; i += 1) {
     if (!lines[i].startsWith("#EXT-X-STREAM-INF:")) continue;
     const bandwidth = Number(lines[i].match(/(?:AVERAGE-)?BANDWIDTH=(\d+)/)?.[1] || 0);
+    const height = Number(lines[i].match(/RESOLUTION=\d+x(\d+)/)?.[1] || 0);
     const uri = lines.slice(i + 1).find(line => line && !line.startsWith("#"));
-    if (uri) variants.push({ bandwidth, url: new URL(uri, base).href });
+    if (uri) variants.push({ bandwidth, height, url: new URL(uri, base).href });
   }
-  return variants.sort((a, b) => b.bandwidth - a.bandwidth)[0]?.url || "";
+  const eligible = maxHeight ? variants.filter(item => !item.height || item.height <= maxHeight) : variants;
+  return (eligible.length ? eligible : variants).sort((a, b) => b.bandwidth - a.bandwidth)[0]?.url || "";
 }
 async function discover() {
   let playlist = sourceUrl;
