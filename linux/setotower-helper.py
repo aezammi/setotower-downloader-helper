@@ -36,6 +36,10 @@ def valid_url(url):
 def is_magnet(url):
     return urllib.parse.urlparse(url).scheme.lower() == "magnet"
 
+def uses_browser_session(url):
+    host = (urllib.parse.urlparse(url).hostname or "").lower().removeprefix("www.")
+    return host in {"instagram.com", "instagr.am", "threads.net"} or host.endswith(".instagram.com")
+
 def magnet_info(url):
     query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
     name = query.get("dn", [""])[0].strip() or "Magnet download"
@@ -44,11 +48,15 @@ def magnet_info(url):
 def ytdlp_info(url):
     if not valid_url(url): raise ValueError("Paste a valid media link.")
     node = shutil.which("node") or "/usr/bin/node"
-    result = subprocess.run(["yt-dlp", "--js-runtimes", f"node:{node}", "--extractor-args", "youtube:player_client=android", "--dump-single-json", "--skip-download", "--no-playlist", url], capture_output=True, text=True, timeout=120)
+    command = ["yt-dlp", "--js-runtimes", f"node:{node}", "--extractor-args", "youtube:player_client=android", "--dump-single-json", "--skip-download", "--no-playlist"]
+    if uses_browser_session(url): command += ["--cookies-from-browser", "brave"]
+    result = subprocess.run(command + [url], capture_output=True, text=True, timeout=120)
     if result.returncode:
         reason = result.stderr.lower()
         if "unavailable" in reason: raise ValueError("This video is unavailable from the source.")
         if "not a bot" in reason: raise ValueError("The source requested verification. Please retry later.")
+        if uses_browser_session(url) and any(text in reason for text in ("login required", "requested content", "checkpoint", "challenge")):
+            raise ValueError("Instagram requires an active login in Brave, or the Reel is private/restricted.")
         raise ValueError("The video source could not be inspected.")
     data = json.loads(result.stdout)
     heights = sorted({int(f["height"]) for f in data.get("formats", []) if f.get("height") and f.get("vcodec") not in (None, "none") and f.get("ext") == "mp4"}, reverse=True)
@@ -121,6 +129,7 @@ def run_job(job, url, kind, quality, headers):
             cmd = ["yt-dlp", "--extractor-args", "youtube:player_client=android", "--no-playlist", "--newline", "--progress", "--print", "after_move:SETOTOWER_FILE:%(filepath)s", "-o", str(DEST / "%(title).150B [%(id)s].%(ext)s")]
             if kind == "mp3": cmd += ["-x", "--audio-format", "mp3"]
             else: cmd += ["-f", fmt, "--merge-output-format", "mp4"]
+            if uses_browser_session(url): cmd += ["--cookies-from-browser", "brave"]
             cmd += ["--", url]
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         for line in process.stdout:

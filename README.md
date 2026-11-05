@@ -14,6 +14,9 @@ web host does not keep a media copy.
   only for content you are authorized to download.
 - Video downloads explicitly request separate best-video and best-audio
   streams, then merge them with FFmpeg so sites such as TikTok retain sound.
+- Instagram Reels, Threads, and similar session-protected links use the local
+  Brave browser cookie store when available. The helper never uploads those
+  cookies; private or login-restricted content still cannot be downloaded.
 - `engine/cineb-hls.mjs` handles a prepared, authorized Cineb HLS VOD URL. It
   fetches TS segments in bounded parallel batches and pipes them in playlist
   order to FFmpeg for a progressive MP4.

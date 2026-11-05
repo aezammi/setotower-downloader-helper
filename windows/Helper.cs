@@ -104,6 +104,7 @@ internal static class Helper {
         }catch(Exception e){try{Reply(stream,400,new{error=Friendly(e.Message)},cors);}catch{}}
     }}}
     static bool IsHls(Uri u){return (u.AbsolutePath.EndsWith(".m3u8",StringComparison.OrdinalIgnoreCase)||u.Query.IndexOf(".m3u8",StringComparison.OrdinalIgnoreCase)>=0)&&String.IsNullOrEmpty(u.UserInfo);}
+    static bool UsesBrowserSession(Uri u){var host=u.Host.ToLowerInvariant();return host=="instagram.com"||host.EndsWith(".instagram.com")||host=="instagr.am"||host=="threads.net"||host.EndsWith(".threads.net");}
     static void ValidateUrl(string url){Uri u;if(!Uri.TryCreate(url,UriKind.Absolute,out u)||(u.Scheme!="https"&&u.Scheme!="http")||!String.IsNullOrEmpty(u.UserInfo))throw new Exception("Paste a valid http or https link.");}
     static string Quote(string s){
         var result=new StringBuilder();result.Append('"');int slashes=0;
@@ -113,7 +114,7 @@ internal static class Helper {
     static ProcessStartInfo Command(List<string> args){return new ProcessStartInfo(Path.Combine(Tools,"yt-dlp.exe"),String.Join(" ",args.Select(Quote))){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8,WorkingDirectory=Home};}
     static ProcessStartInfo HlsCommand(List<string> args){return new ProcessStartInfo(Path.Combine(Tools,"node.exe"),String.Join(" ",args.Select(Quote))){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8,WorkingDirectory=Home};}
     static List<string> BaseArgs(){return new List<string>{"--ignore-config","--no-playlist","--no-cache-dir","--js-runtimes","node:"+Path.Combine(Tools,"node.exe"),"--ffmpeg-location",Tools,"--encoding","utf-8","--socket-timeout","25","--retries","2"};}
-    static object Info(string url){Uri u;Uri.TryCreate(url,UriKind.Absolute,out u);if(IsHls(u)){var title=Path.GetFileNameWithoutExtension(u.AbsolutePath);return new{title=String.IsNullOrEmpty(title)?"Cineb video":title,thumbnail=(object)null,uploader="Cineb",duration=(object)null,engine="cineb-hls",video=new[]{new{value="best",label="Highest available MP4"}},audio=new[]{new{value="best",label="Audio embedded in video"}}};}var args=BaseArgs();args.AddRange(new[]{"--dump-single-json","--skip-download","--",url});
+    static object Info(string url){Uri u;Uri.TryCreate(url,UriKind.Absolute,out u);if(IsHls(u)){var title=Path.GetFileNameWithoutExtension(u.AbsolutePath);return new{title=String.IsNullOrEmpty(title)?"Cineb video":title,thumbnail=(object)null,uploader="Cineb",duration=(object)null,engine="cineb-hls",video=new[]{new{value="best",label="Highest available MP4"}},audio=new[]{new{value="best",label="Audio embedded in video"}}};}var args=BaseArgs();if(UsesBrowserSession(u))args.AddRange(new[]{"--cookies-from-browser","brave"});args.AddRange(new[]{"--dump-single-json","--skip-download","--",url});
         using(var p=Process.Start(Command(args))){var output=p.StandardOutput.ReadToEndAsync();var err=p.StandardError.ReadToEndAsync();if(!p.WaitForExit(120000)){p.Kill();throw new Exception("YouTube took too long to respond. Retry shortly.");}if(p.ExitCode!=0)throw new Exception(err.Result);
             var data=Json().Deserialize<Dictionary<string,object>>(output.Result);var formats=(System.Collections.IEnumerable)data["formats"];var heights=new SortedSet<int>();
             foreach(Dictionary<string,object> f in formats){if(f.ContainsKey("height")&&f["height"]!=null&&f.ContainsKey("ext")&&new[]{"mp4","webm"}.Contains(Convert.ToString(f["ext"]))&&f.ContainsKey("vcodec")&&Convert.ToString(f["vcodec"])!="none")heights.Add(Convert.ToInt32(f["height"]));}
@@ -128,7 +129,7 @@ internal static class Helper {
         args.AddRange(new[]{"--newline","--progress","--no-simulate","--print","after_move:SETOTOWER_FILE:%(filepath)s","-o",Path.Combine(Destination,"%(title).150B [%(id)s].%(ext)s")});
         if(type=="mp3")args.AddRange(new[]{"-f","bestaudio/best","-x","--audio-format","mp3","--audio-quality",quality=="best"?"0":quality+"K"});
         else{string height=quality=="best"?"":"[height<="+quality+"]";args.AddRange(new[]{"-f","bv*"+height+"+ba/b"+height+"/b","--merge-output-format","mp4"});}
-        args.AddRange(new[]{"--",url});
+        if(UsesBrowserSession(uri))args.AddRange(new[]{"--cookies-from-browser","brave"});args.AddRange(new[]{"--",url});
         using(var p=new Process{StartInfo=Command(args)}){var errors=new StringBuilder();
             p.OutputDataReceived+=(s,e)=>{if(e.Data==null)return;lock(Gate){if(e.Data.StartsWith("SETOTOWER_FILE:"))job.File=e.Data.Substring(15);else if(e.Data.Contains("[download]")||e.Data.Contains("[Merger]")||e.Data.Contains("[ExtractAudio]"))job.Progress=e.Data;}};
             p.ErrorDataReceived+=(s,e)=>{if(e.Data==null)return;lock(errors){if(errors.Length>6000)errors.Clear();errors.AppendLine(e.Data);}};
