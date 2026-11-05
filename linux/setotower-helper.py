@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, os, secrets, shutil, socket, socketserver, subprocess, threading, time, urllib.parse
+import json, os, re, secrets, shutil, socket, socketserver, subprocess, threading, time, urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -103,7 +103,17 @@ def run_job(job, url, kind, quality, headers):
         for line in process.stdout:
             line = line.strip()
             if line.startswith("SETOTOWER_FILE:"): job["file"] = line.split(":", 1)[1]
-            elif line: job["progress"] = line[-500:]
+            elif line.startswith("SETOTOWER_HLS:"):
+                parts = line.split(":")
+                if len(parts) > 1 and parts[1].isdigit(): job["total"] = int(parts[1]); job["current"] = 0; job["percent"] = 0
+            elif line.startswith("SETOTOWER_PROGRESS:"):
+                match = re.search(r"(\d+)\s*/\s*(\d+)", line)
+                if match:
+                    job["current"] = int(match.group(1)); job["total"] = int(match.group(2)); job["percent"] = round(job["current"] * 100 / job["total"]) if job["total"] else 0
+            elif line:
+                match = re.search(r"(\d+(?:\.\d+)?)%", line)
+                if match:
+                    job["percent"] = min(100, max(0, round(float(match.group(1))))); job["current"] = job["percent"]; job["total"] = 100
         code = process.wait()
         if code != 0: raise RuntimeError("The local download engine could not complete the file.")
         if source_url.lower().split("?", 1)[0].endswith(".m3u8") and not job.get("file"):
@@ -111,7 +121,7 @@ def run_job(job, url, kind, quality, headers):
             if candidate.exists(): job["file"] = str(candidate)
         if not job.get("file") or not Path(job["file"]).exists() or Path(job["file"]).stat().st_size == 0:
             raise RuntimeError("The local download engine completed without producing a file.")
-        job.update(state="complete", progress="Download complete")
+        job.update(state="complete", current=job.get("total", 100), total=job.get("total", 100), percent=100)
     except Exception as error:
         job.update(state="error", error=str(error))
     finally:
@@ -149,7 +159,7 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as error: return json_body(self, 422, {"error": str(error)})
         if self.path != "/v1/download": return json_body(self, 404, {"error": "Unknown endpoint."})
         ACTIVE = True
-        job = {"id": secrets.token_hex(16), "state": "downloading", "progress": "Starting download…", "file": "", "error": ""}
+        job = {"id": secrets.token_hex(16), "state": "downloading", "current": 0, "total": 0, "percent": 0, "file": "", "error": ""}
         JOBS[job["id"]] = job
         job["request"] = data
         threading.Thread(target=run_job, args=(job, url, kind, quality, data.get("headers", {})), daemon=True).start()
