@@ -35,8 +35,8 @@ Version: $VERSION
 Section: net
 Priority: optional
 Architecture: all
-Maintainer: Setotower <opensource@example.invalid>
-Depends: python3 (>= 3.10), ffmpeg, yt-dlp, nodejs
+Maintainer: Setotower <niroulaoskar@gmail.com>
+Depends: python3 (>= 3.10), ffmpeg, yt-dlp, nodejs, aria2
 Description: Setotower silent on-demand download helper
  Downloads supported media directly to the local user's Downloads/Setotower folder.
  Includes the Cineb HLS engine and uses systemd socket activation.

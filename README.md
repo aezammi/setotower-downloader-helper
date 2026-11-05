@@ -11,7 +11,9 @@ web host does not keep a media copy.
   supports; the helper does not require a per-site allowlist.
 - `aria2c` handles `magnet:?` BitTorrent links and writes the completed torrent
   contents directly to the device's `Downloads/Setotower` folder. Use magnets
-  only for content you are authorized to download.
+  only for content you are authorized to download. Before download, the helper
+  fetches the magnet metadata and shows the real file list and sizes in the
+  browser, like a desktop download manager.
 - Video downloads explicitly request separate best-video and best-audio
   streams, then merge them with FFmpeg so sites such as TikTok retain sound.
 - Instagram Reels, Threads, and similar session-protected links use the local

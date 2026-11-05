@@ -86,8 +86,19 @@ def magnet_metadata(url):
     cached = MAGNET_METADATA.get(url)
     if cached and cached["expires"] > time.monotonic(): return cached["files"]
     with tempfile.TemporaryDirectory(prefix="setotower-magnet-") as folder:
-        command = ["aria2c", "--bt-metadata-only=true", "--bt-save-metadata=true", "--dir", folder, "--seed-time=0", "--summary-interval=0", "--file-allocation=none", "--listen-port=0", "--dht-listen-port=0", "--bt-tracker-connect-timeout=10", "--bt-tracker-timeout=10", "--", url]
-        result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+        command = [
+            "aria2c", "--bt-metadata-only=true", "--bt-save-metadata=true",
+            "--dir", folder, "--seed-time=0", "--summary-interval=0",
+            "--file-allocation=none", "--enable-dht=true", "--enable-peer-exchange=true",
+            "--bt-enable-lpd=true", "--bt-tracker-connect-timeout=8",
+            "--bt-tracker-timeout=8", "--connect-timeout=8", "--timeout=20",
+            "--bt-stop-timeout=25", "--", url,
+        ]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=35)
+        except subprocess.TimeoutExpired as exc:
+            detail = (exc.stderr or "").strip().splitlines()[-1:]
+            raise ValueError("Torrent metadata timed out; the magnet has no reachable peers right now.") from exc
         torrent_files = list(Path(folder).glob("*.torrent"))
         if result.returncode != 0 or not torrent_files: raise ValueError("The magnet metadata could not be fetched. The torrent may have no reachable peers.")
         files = inspect_torrent_file(torrent_files[0])
