@@ -9,6 +9,9 @@ web host does not keep a media copy.
 
 - `yt-dlp` handles any valid HTTP(S) page or media URL that its extractor
   supports; the helper does not require a per-site allowlist.
+- `aria2c` handles `magnet:?` BitTorrent links and writes the completed torrent
+  contents directly to the device's `Downloads/Setotower` folder. Use magnets
+  only for content you are authorized to download.
 - `engine/cineb-hls.mjs` handles a prepared, authorized Cineb HLS VOD URL. It
   fetches TS segments in bounded parallel batches and pipes them in playlist
   order to FFmpeg for a progressive MP4.

@@ -30,7 +30,16 @@ def json_body(handler, status, value):
 
 def valid_url(url):
     parsed = urllib.parse.urlparse(url)
+    if parsed.scheme == "magnet": return bool(urllib.parse.parse_qs(parsed.query).get("xt"))
     return parsed.scheme in ("http", "https") and not parsed.username and not parsed.password
+
+def is_magnet(url):
+    return urllib.parse.urlparse(url).scheme.lower() == "magnet"
+
+def magnet_info(url):
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+    name = query.get("dn", [""])[0].strip() or "Magnet download"
+    return {"title": name, "thumbnail": None, "uploader": "BitTorrent", "duration": None, "engine": "magnet", "video": [{"value": "torrent", "label": "Torrent files"}], "audio": []}
 
 def ytdlp_info(url):
     if not valid_url(url): raise ValueError("Paste a valid media link.")
@@ -83,6 +92,20 @@ def run_job(job, url, kind, quality, headers):
         DEST.mkdir(parents=True, exist_ok=True)
         title = "setotower-download"
         output = DEST / (title + (".mp3" if kind == "mp3" else ".mp4"))
+        if is_magnet(url):
+            started = time.time()
+            cmd = ["aria2c", "--dir", str(DEST), "--seed-time=0", "--bt-stop-timeout=60", "--file-allocation=none", "--summary-interval=1", "--console-log-level=notice", "--download-result=hide", "--auto-file-renaming=false", "--allow-overwrite=false", "--", url]
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            for line in process.stdout:
+                match = re.search(r"\((\d+)%\)", line)
+                if match:
+                    job["percent"] = int(match.group(1)); job["current"] = job["percent"]; job["total"] = 100
+            code = process.wait()
+            if code != 0: raise RuntimeError("The torrent could not be downloaded. It may have no active peers.")
+            files = [path for path in DEST.rglob("*") if path.is_file() and not path.name.endswith(".aria2") and path.stat().st_mtime >= started]
+            if files: job["file"] = str(files[0])
+            job.update(state="complete", current=100, total=100, percent=100)
+            return
         prepared = READY_SOURCES.get(url, {})
         if prepared.get("expires", 0) < time.monotonic(): prepared = {}
         payload = prepared.get("payload", {})
@@ -154,6 +177,7 @@ class Handler(BaseHTTPRequestHandler):
         if not valid_url(url): return json_body(self, 400, {"error": "Invalid media URL."})
         if self.path == "/v1/info":
             try:
+                if is_magnet(url): return json_body(self, 200, magnet_info(url))
                 if is_cineb_page(url): return json_body(self, 200, cineb_info(url, data))
                 return json_body(self, 200, hls_info(url) if url.lower().split("?", 1)[0].endswith(".m3u8") else ytdlp_info(url))
             except ValueError as error: return json_body(self, 422, {"error": str(error)})
