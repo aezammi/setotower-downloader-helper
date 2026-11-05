@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, os, re, secrets, shutil, socket, socketserver, subprocess, threading, time, urllib.parse
+import json, os, re, secrets, shutil, socket, socketserver, subprocess, tempfile, threading, time, urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -15,6 +15,7 @@ ACTIVE = False
 LAST_ACTIVITY = time.monotonic()
 READY_SOURCES = {}
 BROWSER_SESSION_URLS = set()
+MAGNET_METADATA = {}
 BRIDGE = os.environ.get("SETOTOWER_CINEB_BRIDGE", "http://127.0.0.1:8765/api/resolve")
 
 def json_body(handler, status, value):
@@ -45,10 +46,59 @@ def ytdlp_binary():
     preferred = Path.home() / ".local/bin/yt-dlp"
     return str(preferred) if preferred.exists() else (shutil.which("yt-dlp") or "yt-dlp")
 
+def bdecode(raw, index=0):
+    marker = raw[index:index + 1]
+    if marker == b"i":
+        end = raw.index(b"e", index); return int(raw[index + 1:end]), end + 1
+    if marker == b"l":
+        values = []; index += 1
+        while raw[index:index + 1] != b"e": value, index = bdecode(raw, index); values.append(value)
+        return values, index + 1
+    if marker == b"d":
+        values = {}; index += 1
+        while raw[index:index + 1] != b"e":
+            key, index = bdecode(raw, index); value, index = bdecode(raw, index); values[key] = value
+        return values, index + 1
+    colon = raw.index(b":", index); length = int(raw[index:colon]); start = colon + 1
+    return raw[start:start + length], start + length
+
+def format_size(size):
+    value = float(size or 0)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1024 or unit == "TB": return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+        value /= 1024
+
+def inspect_torrent_file(path):
+    metadata, _ = bdecode(Path(path).read_bytes())
+    info = metadata.get(b"info", {})
+    root = info.get(b"name", b"torrent").decode("utf-8", "replace")
+    files = []
+    if isinstance(info.get(b"files"), list):
+        for item in info[b"files"]:
+            parts = [part.decode("utf-8", "replace") for part in item.get(b"path", [])]
+            files.append({"path": "/".join([root, *parts]), "size": int(item.get(b"length", 0)), "sizeLabel": format_size(item.get(b"length", 0))})
+    else:
+        length = int(info.get(b"length", 0)); files.append({"path": root, "size": length, "sizeLabel": format_size(length)})
+    files.sort(key=lambda item: item["path"].lower())
+    return files
+
+def magnet_metadata(url):
+    cached = MAGNET_METADATA.get(url)
+    if cached and cached["expires"] > time.monotonic(): return cached["files"]
+    with tempfile.TemporaryDirectory(prefix="setotower-magnet-") as folder:
+        command = ["aria2c", "--bt-metadata-only=true", "--bt-save-metadata=true", "--dir", folder, "--seed-time=0", "--summary-interval=0", "--file-allocation=none", "--listen-port=0", "--dht-listen-port=0", "--bt-tracker-connect-timeout=10", "--bt-tracker-timeout=10", "--", url]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+        torrent_files = list(Path(folder).glob("*.torrent"))
+        if result.returncode != 0 or not torrent_files: raise ValueError("The magnet metadata could not be fetched. The torrent may have no reachable peers.")
+        files = inspect_torrent_file(torrent_files[0])
+    MAGNET_METADATA[url] = {"files": files, "expires": time.monotonic() + 900}
+    return files
+
 def magnet_info(url):
     query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
     name = query.get("dn", [""])[0].strip() or "Magnet download"
-    return {"title": name, "thumbnail": None, "uploader": "BitTorrent", "duration": None, "engine": "magnet", "video": [{"value": "torrent", "label": "Torrent files"}], "audio": []}
+    files = magnet_metadata(url)
+    return {"title": name, "thumbnail": None, "uploader": "BitTorrent", "duration": None, "engine": "magnet", "video": [{"value": "torrent", "label": "Torrent files"}], "audio": [], "files": files, "totalSize": format_size(sum(item["size"] for item in files))}
 
 def ytdlp_info(url):
     if not valid_url(url): raise ValueError("Paste a valid media link.")
