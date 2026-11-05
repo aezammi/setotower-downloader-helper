@@ -74,11 +74,11 @@ def inspect_torrent_file(path):
     root = info.get(b"name", b"torrent").decode("utf-8", "replace")
     files = []
     if isinstance(info.get(b"files"), list):
-        for item in info[b"files"]:
+        for index, item in enumerate(info[b"files"]):
             parts = [part.decode("utf-8", "replace") for part in item.get(b"path", [])]
-            files.append({"path": "/".join([root, *parts]), "size": int(item.get(b"length", 0)), "sizeLabel": format_size(item.get(b"length", 0))})
+            files.append({"index": index, "path": "/".join([root, *parts]), "size": int(item.get(b"length", 0)), "sizeLabel": format_size(item.get(b"length", 0))})
     else:
-        length = int(info.get(b"length", 0)); files.append({"path": root, "size": length, "sizeLabel": format_size(length)})
+        length = int(info.get(b"length", 0)); files.append({"index": 0, "path": root, "size": length, "sizeLabel": format_size(length)})
     files.sort(key=lambda item: item["path"].lower())
     return files
 
@@ -176,6 +176,12 @@ def run_job(job, url, kind, quality, headers):
         if is_magnet(url):
             started = time.time()
             cmd = ["aria2c", "--dir", str(DEST), "--seed-time=0", "--bt-stop-timeout=60", "--file-allocation=none", "--summary-interval=1", "--console-log-level=notice", "--download-result=hide", "--auto-file-renaming=false", "--allow-overwrite=false", "--", url]
+            selected = set(job.get("request", {}).get("files") or [])
+            if selected:
+                metadata_files = magnet_metadata(url)
+                indices = [str(item["index"] + 1) for item in metadata_files if item["path"] in selected]
+                if not indices: raise ValueError("Choose at least one torrent file to download.")
+                cmd[-1:-1] = ["--select-file", ",".join(indices)]
             process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
             for line in process.stdout:
                 match = re.search(r"\((\d+)%\)", line)
