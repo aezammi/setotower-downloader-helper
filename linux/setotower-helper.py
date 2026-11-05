@@ -14,6 +14,7 @@ LOCK = threading.Lock()
 ACTIVE = False
 LAST_ACTIVITY = time.monotonic()
 READY_SOURCES = {}
+BROWSER_SESSION_URLS = set()
 BRIDGE = os.environ.get("SETOTOWER_CINEB_BRIDGE", "http://127.0.0.1:8765/api/resolve")
 
 def json_body(handler, status, value):
@@ -52,9 +53,16 @@ def magnet_info(url):
 def ytdlp_info(url):
     if not valid_url(url): raise ValueError("Paste a valid media link.")
     node = shutil.which("node") or "/usr/bin/node"
-    command = [ytdlp_binary(), "--js-runtimes", f"node:{node}", "--extractor-args", "youtube:player_client=android", "--dump-single-json", "--skip-download", "--no-playlist"]
-    if uses_browser_session(url): command += ["--cookies-from-browser", "brave"]
-    result = subprocess.run(command + [url], capture_output=True, text=True, timeout=120)
+    base = [ytdlp_binary(), "--js-runtimes", f"node:{node}", "--extractor-args", "youtube:player_client=android", "--dump-single-json", "--skip-download", "--no-playlist"]
+    attempts = [base]
+    if uses_browser_session(url): attempts.append(base + ["--cookies-from-browser", "brave"])
+    result = None
+    for command in attempts:
+        candidate = subprocess.run(command + [url], capture_output=True, text=True, timeout=120)
+        result = candidate
+        if candidate.returncode == 0:
+            if len(attempts) > 1 and command is attempts[1]: BROWSER_SESSION_URLS.add(url)
+            break
     if result.returncode:
         reason = result.stderr.lower()
         if "unavailable" in reason: raise ValueError("This video is unavailable from the source.")
@@ -133,7 +141,7 @@ def run_job(job, url, kind, quality, headers):
             cmd = [ytdlp_binary(), "--extractor-args", "youtube:player_client=android", "--no-playlist", "--newline", "--progress", "--print", "after_move:SETOTOWER_FILE:%(filepath)s", "-o", str(DEST / "%(title).150B [%(id)s].%(ext)s")]
             if kind == "mp3": cmd += ["-x", "--audio-format", "mp3"]
             else: cmd += ["-f", fmt, "--merge-output-format", "mp4"]
-            if uses_browser_session(url): cmd += ["--cookies-from-browser", "brave"]
+            if url in BROWSER_SESSION_URLS: cmd += ["--cookies-from-browser", "brave"]
             cmd += ["--", url]
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         for line in process.stdout:
