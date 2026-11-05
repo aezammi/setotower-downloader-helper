@@ -1,41 +1,67 @@
-# Setotower Downloader Helper
+# Setotower Downloader
 
-The Setotower Downloader Helper is a silent, local companion for the Setotower Downloader website. It keeps media processing on the user's own Windows or Debian/Ubuntu device and saves completed files in `Downloads/Setotower`.
+The downloader is the client-side download product for Setotower. The browser
+site selects a format and sends the job to a helper on the same device. Video
+bytes are written directly to that device's `Downloads/Setotower` folder; the
+web host does not keep a media copy.
 
-It is socket/on-demand oriented: no remote worker, LAN listener, account password, browser cookie, or credential is included. The helper listens only on loopback (`127.0.0.1:17843`), accepts requests from `https://downloader.setotower.com`, and exits after five minutes without activity.
+## Engines
 
-## Linux
+- `yt-dlp` handles any valid HTTP(S) page or media URL that its extractor
+  supports; the helper does not require a per-site allowlist.
+- `engine/cineb-hls.mjs` handles a prepared, authorized Cineb HLS VOD URL. It
+  fetches TS segments in bounded parallel batches and pipes them in playlist
+  order to FFmpeg for a progressive MP4.
+- Cineb movie/series pages are resolved automatically through the local Cineb
+  bridge. The bridge asks Cineb for provider candidates, tries them headlessly,
+  and caches the first working HLS stream during Fetch so Download starts
+  without repeating provider discovery.
 
-The hosted installer installs the helper and its systemd user socket:
+## Linux install
+
+On Debian/Ubuntu:
 
 ```sh
 curl -fsSL https://downloader.setotower.com/helper/linux/install.sh | bash
 ```
 
-For APT-managed installation:
+The socket unit listens only on `127.0.0.1:17843`. The helper process starts
+when the downloader connects and exits after five idle minutes.
+
+## Windows install
+
+Download `helper.exe` from the downloader site and run it once. The current
+Windows release is a per-user tray helper and saves to `Downloads\\Setotower`.
+When shipping the HLS engine in a new Windows release, run
+`helper/build.ps1` on Windows; it rebuilds the signed tool archive hash in
+`BuildConfig.cs` before compiling the helper.
+
+## Local host
+
+The local service file is `local-host.service`. It serves the built site on
+port `3077` and can be installed for the current Linux user with:
 
 ```sh
-curl -fsSL https://downloader.setotower.com/apt/install-source.sh | bash
+install -d ~/.config/systemd/user
+install -m 0644 downloader/local-host.service ~/.config/systemd/user/setotower-downloader-local.service
+systemctl --user daemon-reload
+systemctl --user enable --now setotower-downloader-local.service
 ```
 
-The Linux helper requires Python 3, FFmpeg, yt-dlp, Node.js, and systemd user services. The Cineb HLS engine is included at `engine/cineb-hls.mjs`.
+Point the public DNS/tunnel/reverse proxy for `downloader.setotower.com` at
+this machine's port `3077` to bypass Phoenix. The local service itself does
+not change DNS, router forwarding, or Cloudflare settings.
 
-## Windows
+If the current `cloudflared` login is for another Cloudflare zone, authenticate
+once with the Setotower account, create a tunnel, then route the hostname:
 
-Build `windows/helper.exe` with Windows .NET Framework 4.x and PowerShell. `windows/build.ps1` collects the locally installed yt-dlp, FFmpeg, and Node binaries, adds the Cineb HLS engine, creates a verified tools archive, and compiles the helper.
+```sh
+cloudflared tunnel login
+cloudflared tunnel create setotower-downloader-local
+cloudflared tunnel route dns setotower-downloader-local downloader.setotower.com
+cloudflared tunnel --config ~/.cloudflared/setotower-downloader.yml run
+```
 
-The Windows helper is intentionally silent and on-demand. It registers the `setotower-helper://start` protocol for the website, does not add startup registration, and removes its idle listener after five minutes.
-
-## Supported sources
-
-yt-dlp handles supported public media URLs. Cineb downloads use a prepared HLS VOD `.m3u8` URL and the bundled engine. Use only content you are authorized to download and follow the terms of the source service.
-
-## Security and privacy
-
-The repository contains source code only. It contains no Cloudflare credentials, R2 keys, tunnel tokens, private SSH keys, production logs, browser cookies, or generated helper binaries. Runtime tokens are generated in memory per helper process. Requests are origin-checked and mutating requests also require that process token.
-
-The Windows distributed tool archive contains third-party tools and their license/source notices; this public source repository does not redistribute those binaries.
-
-## License
-
-The Setotower helper source is released under the MIT License. Third-party tools remain under their own licenses.
+Use `local-tunnel.example.yml` as the ingress config. This must be done with
+the Setotower Cloudflare account; the local machine's existing certificate is
+for a different zone.

@@ -104,7 +104,7 @@ internal static class Helper {
         }catch(Exception e){try{Reply(stream,400,new{error=Friendly(e.Message)},cors);}catch{}}
     }}}
     static bool IsHls(Uri u){return (u.AbsolutePath.EndsWith(".m3u8",StringComparison.OrdinalIgnoreCase)||u.Query.IndexOf(".m3u8",StringComparison.OrdinalIgnoreCase)>=0)&&String.IsNullOrEmpty(u.UserInfo);}
-    static void ValidateUrl(string url){Uri u;if(!Uri.TryCreate(url,UriKind.Absolute,out u)||(u.Scheme!="https"&&u.Scheme!="http")||!String.IsNullOrEmpty(u.UserInfo))throw new Exception("Paste a valid media link.");if(IsHls(u))return;if(!new[]{"youtube.com","www.youtube.com","m.youtube.com","music.youtube.com","youtu.be","www.youtu.be"}.Contains(u.Host.ToLowerInvariant()))throw new Exception("This source is not supported yet. Use a supported video link or a prepared HLS source.");}
+    static void ValidateUrl(string url){Uri u;if(!Uri.TryCreate(url,UriKind.Absolute,out u)||(u.Scheme!="https"&&u.Scheme!="http")||!String.IsNullOrEmpty(u.UserInfo))throw new Exception("Paste a valid http or https link.");}
     static string Quote(string s){
         var result=new StringBuilder();result.Append('"');int slashes=0;
         foreach(char c in s){if(c=='\\'){slashes++;continue;}if(c=='"'){result.Append('\\',slashes*2+1).Append('"');}else{result.Append('\\',slashes).Append(c);}slashes=0;}

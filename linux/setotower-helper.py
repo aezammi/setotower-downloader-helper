@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json, os, secrets, shutil, socket, socketserver, subprocess, threading, time, urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -12,6 +13,8 @@ JOBS = {}
 LOCK = threading.Lock()
 ACTIVE = False
 LAST_ACTIVITY = time.monotonic()
+READY_SOURCES = {}
+BRIDGE = os.environ.get("SETOTOWER_CINEB_BRIDGE", "http://127.0.0.1:8765/api/resolve")
 
 def json_body(handler, status, value):
     raw = json.dumps(value).encode()
@@ -48,14 +51,46 @@ def hls_info(url):
             "video": [{"value": "best", "label": "Highest available MP4"}],
             "audio": [{"value": "best", "label": "Audio embedded in video"}]}
 
+def is_cineb_page(url):
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    return host == "cineb.setotower.com" and ("/movie/" in parsed.path.lower() or "/series/" in parsed.path.lower())
+
+def resolve_cineb(url, data=None):
+    data = data or {}
+    request_data = {"url": url, "title": data.get("title", "Cineb download"), "type": data.get("media_type", data.get("type", "movie")), "season": data.get("season", 1), "episode": data.get("episode", 1)}
+    request = urllib.request.Request(BRIDGE, data=json.dumps(request_data).encode(), headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=90) as response:
+            result = json.loads(response.read().decode())
+    except Exception as error:
+        raise ValueError("Cineb could not prepare a provider stream. Try again or choose another source.") from error
+    payload = result.get("payload") if isinstance(result, dict) else None
+    if not isinstance(payload, dict) or not payload.get("url"):
+        raise ValueError("Cineb did not return a playable provider stream.")
+    READY_SOURCES[url] = {"payload": payload, "expires": time.monotonic() + 900}
+    return payload
+
+def cineb_info(url, data=None):
+    payload = resolve_cineb(url, data)
+    title = payload.get("filename", "Cineb download").rsplit(".", 1)[0]
+    return {"title": title, "thumbnail": None, "uploader": "Cineb", "duration": None, "engine": "cineb-hls", "video": [{"value": "best", "label": "Highest available MP4"}], "audio": [{"value": "best", "label": "Audio embedded in video"}]}
+
 def run_job(job, url, kind, quality, headers):
     global ACTIVE
     try:
         DEST.mkdir(parents=True, exist_ok=True)
         title = "setotower-download"
         output = DEST / (title + (".mp3" if kind == "mp3" else ".mp4"))
-        if url.lower().split("?", 1)[0].endswith(".m3u8"):
-            cmd = ["node", str(TOOLS / "cineb-hls.mjs"), "--url", url, "--output", str(output), "--headers-json", json.dumps(headers), "--ffmpeg", "ffmpeg", "--connections", "8"]
+        prepared = READY_SOURCES.get(url, {})
+        if prepared.get("expires", 0) < time.monotonic(): prepared = {}
+        payload = prepared.get("payload", {})
+        source_url = payload.get("url", url)
+        source_headers = payload.get("requestHeaders", headers) or headers
+        if is_cineb_page(url) and not payload:
+            payload = resolve_cineb(url, job.get("request", {})); source_url = payload["url"]; source_headers = payload.get("requestHeaders", {})
+        if source_url.lower().split("?", 1)[0].endswith(".m3u8"):
+            cmd = ["node", str(TOOLS / "cineb-hls.mjs"), "--url", source_url, "--output", str(output), "--headers-json", json.dumps(source_headers), "--ffmpeg", "ffmpeg", "--connections", "8"]
         else:
             fmt = "bestaudio/best" if kind == "mp3" else (f"best[height<={quality}]/best" if quality.isdigit() else "best")
             cmd = ["yt-dlp", "--extractor-args", "youtube:player_client=android", "--no-playlist", "--newline", "--progress", "--print", "after_move:SETOTOWER_FILE:%(filepath)s", "-o", str(DEST / "%(title).150B [%(id)s].%(ext)s")]
@@ -69,7 +104,7 @@ def run_job(job, url, kind, quality, headers):
             elif line: job["progress"] = line[-500:]
         code = process.wait()
         if code != 0: raise RuntimeError("The local download engine could not complete the file.")
-        if url.lower().split("?", 1)[0].endswith(".m3u8") and not job.get("file"):
+        if source_url.lower().split("?", 1)[0].endswith(".m3u8") and not job.get("file"):
             candidate = DEST / "setotower-download.mp4"
             if candidate.exists(): job["file"] = str(candidate)
         if not job.get("file") or not Path(job["file"]).exists() or Path(job["file"]).stat().st_size == 0:
@@ -106,12 +141,15 @@ class Handler(BaseHTTPRequestHandler):
         url = str(data.get("url", "")); kind = str(data.get("type", "mp4")); quality = str(data.get("quality", "best"))
         if not valid_url(url): return json_body(self, 400, {"error": "Invalid media URL."})
         if self.path == "/v1/info":
-            try: return json_body(self, 200, hls_info(url) if url.lower().split("?", 1)[0].endswith(".m3u8") else ytdlp_info(url))
+            try:
+                if is_cineb_page(url): return json_body(self, 200, cineb_info(url, data))
+                return json_body(self, 200, hls_info(url) if url.lower().split("?", 1)[0].endswith(".m3u8") else ytdlp_info(url))
             except ValueError as error: return json_body(self, 422, {"error": str(error)})
         if self.path != "/v1/download": return json_body(self, 404, {"error": "Unknown endpoint."})
         ACTIVE = True
         job = {"id": secrets.token_hex(16), "state": "downloading", "progress": "Starting download…", "file": "", "error": ""}
         JOBS[job["id"]] = job
+        job["request"] = data
         threading.Thread(target=run_job, args=(job, url, kind, quality, data.get("headers", {})), daemon=True).start()
         json_body(self, 202, job)
     def log_message(self, *_): pass
