@@ -117,7 +117,7 @@ def run_job(job, url, kind, quality, headers):
             cmd = ["node", str(TOOLS / "cineb-hls.mjs"), "--url", source_url, "--output", str(output), "--headers-json", json.dumps(source_headers), "--ffmpeg", "ffmpeg", "--connections", "8"]
             if quality.isdigit(): cmd += ["--max-height", quality]
         else:
-            fmt = "bestaudio/best" if kind == "mp3" else (f"best[height<={quality}]/best" if quality.isdigit() else "best")
+            fmt = "bestaudio/best" if kind == "mp3" else (f"bv*[height<={quality}]+ba/b[height<={quality}]/b" if quality.isdigit() else "bv*+ba/b")
             cmd = ["yt-dlp", "--extractor-args", "youtube:player_client=android", "--no-playlist", "--newline", "--progress", "--print", "after_move:SETOTOWER_FILE:%(filepath)s", "-o", str(DEST / "%(title).150B [%(id)s].%(ext)s")]
             if kind == "mp3": cmd += ["-x", "--audio-format", "mp3"]
             else: cmd += ["-f", fmt, "--merge-output-format", "mp4"]

@@ -127,7 +127,7 @@ internal static class Helper {
         var args=BaseArgs();
         args.AddRange(new[]{"--newline","--progress","--no-simulate","--print","after_move:SETOTOWER_FILE:%(filepath)s","-o",Path.Combine(Destination,"%(title).150B [%(id)s].%(ext)s")});
         if(type=="mp3")args.AddRange(new[]{"-f","bestaudio/best","-x","--audio-format","mp3","--audio-quality",quality=="best"?"0":quality+"K"});
-        else{string height=quality=="best"?"":"[height<="+quality+"]";args.AddRange(new[]{"-f","bv*"+height+"[vcodec^=avc1]+ba[ext=m4a]/bv*"+height+"[ext=mp4]+ba/b"+height+"[ext=mp4]/b"+height,"--merge-output-format","mp4"});}
+        else{string height=quality=="best"?"":"[height<="+quality+"]";args.AddRange(new[]{"-f","bv*"+height+"+ba/b"+height+"/b","--merge-output-format","mp4"});}
         args.AddRange(new[]{"--",url});
         using(var p=new Process{StartInfo=Command(args)}){var errors=new StringBuilder();
             p.OutputDataReceived+=(s,e)=>{if(e.Data==null)return;lock(Gate){if(e.Data.StartsWith("SETOTOWER_FILE:"))job.File=e.Data.Substring(15);else if(e.Data.Contains("[download]")||e.Data.Contains("[Merger]")||e.Data.Contains("[ExtractAudio]"))job.Progress=e.Data;}};
