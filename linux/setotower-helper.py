@@ -75,7 +75,7 @@ def cineb_info(url, data=None):
     payload = resolve_cineb(url, data)
     title = payload.get("displayTitle") or payload.get("title") or payload.get("filename", "Cineb download").rsplit(".", 1)[0]
     resolutions = payload.get("videoResolutions") or [{"value": "best", "label": "Highest available MP4"}]
-    return {"title": title, "thumbnail": None, "uploader": "Cineb", "duration": None, "engine": "cineb-hls", "video": resolutions, "audio": [{"value": "best", "label": "Audio embedded in video"}]}
+    return {"title": title, "thumbnail": payload.get("thumbnail"), "poster": bool(payload.get("thumbnail")), "uploader": "Cineb", "duration": None, "engine": "cineb-hls", "video": resolutions, "audio": [{"value": "best", "label": "Audio embedded in video"}]}
 
 def run_job(job, url, kind, quality, headers):
     global ACTIVE
