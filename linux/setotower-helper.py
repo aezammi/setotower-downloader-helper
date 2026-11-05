@@ -136,7 +136,7 @@ class Handler(BaseHTTPRequestHandler):
         LAST_ACTIVITY = time.monotonic()
         parsed = urllib.parse.urlparse(self.path)
         if not self._allowed(): return json_body(self, 403, {"error": "Only downloader.setotower.com may use this helper."})
-        if parsed.path == "/v1/health": return json_body(self, 200, {"app": "setotower-helper", "version": "linux-1.0.0", "state": "ready", "token": TOKEN})
+        if parsed.path == "/v1/health": return json_body(self, 200, {"app": "setotower-helper", "version": "linux-1.0.3", "state": "ready", "token": TOKEN})
         if not self.headers.get("X-Setotower-Token") == TOKEN: return json_body(self, 403, {"error": "Reconnect the helper from the website."})
         if parsed.path.startswith("/v1/jobs/"):
             job = JOBS.get(parsed.path.rsplit("/", 1)[-1])
