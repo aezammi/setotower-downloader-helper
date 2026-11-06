@@ -2,6 +2,8 @@
 Description=Setotower Downloader Helper
 Requires=setotower-helper.socket
 After=setotower-helper.socket
+StartLimitIntervalSec=60s
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -9,7 +11,12 @@ ExecStart=%h/.local/share/setotower-helper/setotower-helper.py
 WorkingDirectory=%h/.local/share/setotower-helper
 NoNewPrivileges=true
 PrivateTmp=true
-Restart=no
+MemoryHigh=768M
+MemoryMax=1G
+CPUQuota=200%
+TasksMax=128
+Restart=on-failure
+RestartSec=2s
 Environment=PYTHONUNBUFFERED=1
 StandardOutput=journal
 StandardError=journal

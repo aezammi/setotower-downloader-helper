@@ -19,7 +19,17 @@ MAGNET_METADATA = {}
 BRIDGE = os.environ.get("SETOTOWER_CINEB_BRIDGE", "http://127.0.0.1:8765/api/resolve")
 MAX_JOBS = 32
 JOB_TTL = 3600
+MAX_URL_LENGTH = 8192
+MIN_FREE_BYTES = max(128 * 1024 * 1024, int(os.environ.get("SETOTOWER_MIN_FREE_BYTES", str(1024 * 1024 * 1024))))
 PROCESSES = {}
+
+def ensure_storage_available():
+    """Keep a new transfer from consuming the device's last free space."""
+    DEST.mkdir(parents=True, exist_ok=True)
+    free = shutil.disk_usage(DEST).free
+    if free < MIN_FREE_BYTES:
+        raise ValueError("Not enough free storage on this device to start the download.")
+    return free
 
 def probe_media(path):
     """Return stream types and duration for a completed media file."""
@@ -111,12 +121,14 @@ def json_body(handler, status, value):
     handler.send_header("Content-Length", str(len(raw)))
     handler.send_header("Cache-Control", "no-store")
     handler.send_header("Access-Control-Allow-Origin", ORIGIN)
+    handler.send_header("Access-Control-Allow-Private-Network", "true")
     handler.send_header("Access-Control-Allow-Headers", "Content-Type, X-Setotower-Token")
     handler.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
     handler.end_headers()
     handler.wfile.write(raw)
 
 def valid_url(url):
+    if not isinstance(url, str) or not url or len(url) > MAX_URL_LENGTH: return False
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme == "magnet": return bool(urllib.parse.parse_qs(parsed.query).get("xt"))
     if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password: return False
@@ -128,8 +140,8 @@ def valid_url(url):
         try:
             addresses = [ipaddress.ip_address(item[4][0]) for item in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)]
         except socket.gaierror:
-            addresses = []
-    return not addresses or all(address.is_global for address in addresses)
+            return False
+    return bool(addresses) and all(address.is_global for address in addresses)
 
 def is_magnet(url):
     return urllib.parse.urlparse(url).scheme.lower() == "magnet"
@@ -267,7 +279,7 @@ def run_job(job, url, kind, quality, headers):
     global ACTIVE
     started_at = time.time()
     try:
-        DEST.mkdir(parents=True, exist_ok=True)
+        ensure_storage_available()
         title = "setotower-download"
         output = DEST / (title + (".mp3" if kind == "mp3" else ".mp4"))
         if is_magnet(url):
@@ -363,7 +375,7 @@ class Handler(BaseHTTPRequestHandler):
         LAST_ACTIVITY = time.monotonic()
         parsed = urllib.parse.urlparse(self.path)
         if not self._allowed(): return json_body(self, 403, {"error": "Only downloader.setotower.com may use this helper."})
-        if parsed.path == "/v1/health": return json_body(self, 200, {"app": "setotower-helper", "version": "linux-1.0.7", "state": "ready", "token": TOKEN})
+        if parsed.path == "/v1/health": return json_body(self, 200, {"app": "setotower-helper", "version": "linux-1.0.16", "state": "ready", "token": TOKEN})
         if not self.headers.get("X-Setotower-Token") == TOKEN: return json_body(self, 403, {"error": "Reconnect the helper from the website."})
         if parsed.path.startswith("/v1/jobs/"):
             with LOCK:
