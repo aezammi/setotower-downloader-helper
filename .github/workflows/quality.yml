@@ -40,4 +40,4 @@ jobs:
       - uses: actions/checkout@v4
       - name: Reject credential-shaped source values
         run: |
-          ! grep -RInE '(cfat_|AWS_SECRET_ACCESS_KEY|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|CLOUDFARE_ACCOUNT_TOKEN)' . --exclude-dir=.git
+          ! grep -RInE '(cfat_|AWS_SECRET_ACCESS_KEY|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|CLOUDFARE_ACCOUNT_TOKEN)' . --exclude-dir=.git --exclude='quality.yml'
