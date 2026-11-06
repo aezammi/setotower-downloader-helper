@@ -27,7 +27,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install pinned build tools
         shell: powershell
-        run: choco install yt-dlp ffmpeg nodejs-lts -y --no-progress
+        run: |
+          choco install yt-dlp ffmpeg nodejs-lts -y --no-progress
+          $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+          $env:Path = "$machinePath;$userPath"
+          Get-Command yt-dlp.exe
+          Get-Command ffmpeg.exe
+          Get-Command node.exe
       - name: Build reproducible helper release
         shell: powershell
         run: |
