@@ -69,6 +69,11 @@ internal static class Helper {
         if(cors)h+="Access-Control-Allow-Origin: "+Origin+"\r\nVary: Origin\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, X-Setotower-Token\r\nAccess-Control-Allow-Private-Network: true\r\n";
         byte[] headers=Encoding.ASCII.GetBytes(h+"\r\n");stream.Write(headers,0,headers.Length);stream.Write(body,0,body.Length);
     }
+    static void ReplyEmpty(NetworkStream stream,int status,bool cors){
+        string h="HTTP/1.1 "+status+" Response\r\nContent-Length: 0\r\nCache-Control: no-store\r\nConnection: close\r\n";
+        if(cors)h+="Access-Control-Allow-Origin: "+Origin+"\r\nVary: Origin\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, X-Setotower-Token\r\nAccess-Control-Allow-Private-Network: true\r\n";
+        byte[] headers=Encoding.ASCII.GetBytes(h+"\r\n");stream.Write(headers,0,headers.Length);
+    }
     static void Handle(TcpClient client){Touch();using(client){client.ReceiveTimeout=10000;client.SendTimeout=10000;using(var stream=client.GetStream()){
         bool cors=false;
         try{
@@ -78,7 +83,7 @@ internal static class Helper {
             var headers=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);foreach(var l in lines.Skip(1)){int i=l.IndexOf(':');if(i>0)headers[l.Substring(0,i)]=l.Substring(i+1).Trim();}
             string host,origin;headers.TryGetValue("Host",out host);headers.TryGetValue("Origin",out origin);cors=origin==Origin;
             if(host!="127.0.0.1:"+Port||!cors){Reply(stream,403,new{error="Only the Setotower website may use this helper"},false);return;}
-            if(request[0]=="OPTIONS"){Reply(stream,200,new{ok=true},true);return;}
+            if(request[0]=="OPTIONS"){ReplyEmpty(stream,204,true);return;}
             string route=request[1];
             string supplied;if(!headers.TryGetValue("X-Setotower-Token",out supplied)||supplied!=Token){Reply(stream,403,new{error="Reconnect the helper from the website"},true);return;}
             if(route=="/v1/health"&&request[0]=="GET"){Reply(stream,200,new{app="setotower-helper",version="1.0.1",state=toolState,error=toolError,token=Token},true);return;}
