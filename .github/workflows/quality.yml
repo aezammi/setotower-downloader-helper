@@ -1,0 +1,43 @@
+name: Helper quality
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Validate scripts
+        run: |
+          python -m py_compile linux/setotower-helper.py
+          bash -n linux/install.sh linux/build-deb.sh
+          node --check engine/cineb-hls.mjs
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile helper
+        shell: powershell
+        run: |
+          $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          & $csc /nologo /target:winexe /optimize+ /out:$env:RUNNER_TEMP\helper.exe `
+            /reference:System.Windows.Forms.dll /reference:System.Drawing.dll `
+            /reference:System.Web.Extensions.dll /reference:System.IO.Compression.dll `
+            /reference:System.IO.Compression.FileSystem.dll windows\Helper.cs windows\BuildConfig.cs
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject credential-shaped source values
+        run: |
+          ! grep -RInE '(cfat_|AWS_SECRET_ACCESS_KEY|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|CLOUDFARE_ACCOUNT_TOKEN)' . --exclude-dir=.git
