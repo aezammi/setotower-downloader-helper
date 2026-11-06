@@ -15,7 +15,7 @@ $ytdlpLicenseCommit='412e7f0a4b0588fe884a02b344ac66a06538475b'
 $nodeLicenseCommit='9d8a9adfe837255ef9e69e19e672f7cce4391fdb'
 Invoke-WebRequest "https://raw.githubusercontent.com/yt-dlp/yt-dlp/$ytdlpLicenseCommit/LICENSE" -OutFile (Join-Path $pack 'YTDLP-LICENSE.txt')
 Invoke-WebRequest "https://raw.githubusercontent.com/nodejs/node/$nodeLicenseCommit/LICENSE" -OutFile (Join-Path $pack 'NODE-LICENSE.txt')
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'README.md') -Destination (Join-Path $pack 'SOURCES.md') -Force
+Copy-Item -LiteralPath (Join-Path $project 'README.md') -Destination (Join-Path $pack 'SOURCES.md') -Force
 Compress-Archive -Path (Join-Path $pack '*') -DestinationPath (Join-Path $release 'tools-v1.zip') -CompressionLevel Optimal -Force
 $hash=(Get-FileHash -Algorithm SHA256 (Join-Path $release 'tools-v1.zip')).Hash.ToLowerInvariant()
 $config=Get-Content -Raw (Join-Path $PSScriptRoot 'BuildConfig.cs')
