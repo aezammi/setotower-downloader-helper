@@ -38,6 +38,15 @@ curl -fsSL https://downloader.setotower.com/helper/linux/install.sh | bash
 The socket unit listens only on `127.0.0.1:17843`. The helper process starts
 when the downloader connects and exits after five idle minutes.
 
+To uninstall the Linux helper without removing downloaded media:
+
+```sh
+curl -fsSL https://downloader.setotower.com/helper/linux/uninstall.sh | bash
+```
+
+The script removes only the helper units/runtime files and preserves
+`~/Downloads/Setotower`.
+
 ## Windows install
 
 Download `helper.exe` from the downloader site and run it once. The Windows

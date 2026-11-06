@@ -19,7 +19,7 @@ jobs:
         run: |
           python -m py_compile linux/setotower-helper.py
           python -m unittest discover -s tests -v
-          bash -n linux/install.sh linux/build-deb.sh
+          bash -n linux/install.sh linux/uninstall.sh linux/build-deb.sh
           node --check engine/cineb-hls.mjs
           systemd-analyze verify linux/setotower-helper.service
 
