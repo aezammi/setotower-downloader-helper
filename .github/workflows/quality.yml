@@ -11,8 +11,8 @@ jobs:
   linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.x'
       - name: Validate scripts
@@ -26,7 +26,7 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install pinned build tools
         shell: powershell
         run: |
@@ -56,7 +56,7 @@ jobs:
           if ($parseErrors.Count -gt 0) { throw 'uninstall.ps1 failed PowerShell parsing' }
           Get-FileHash windows\release\helper.exe,windows\release\tools-v1.zip -Algorithm SHA256
       - name: Upload release artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: setotower-windows-helper
           path: windows/release/
@@ -64,7 +64,7 @@ jobs:
   secrets:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Reject credential-shaped source values
         run: |
           ! grep -RInE '(cfat_|AWS_SECRET_ACCESS_KEY|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|CLOUDFARE_ACCOUNT_TOKEN)' . --exclude-dir=.git --exclude='quality.yml'
