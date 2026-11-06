@@ -46,6 +46,15 @@ It exits after five idle minutes. When shipping the HLS engine in a new
 Windows release, run `helper/build.ps1` on Windows; it rebuilds the SHA-256
 tool archive hash in `BuildConfig.cs` before compiling the helper.
 
+To uninstall the Windows helper without removing downloaded media, run:
+
+```powershell
+irm https://downloader.setotower.com/helper/uninstall.ps1 | iex
+```
+
+The script removes only `%LOCALAPPDATA%\SetotowerDownloader` and preserves
+`Downloads\Setotower`.
+
 Both helpers reject localhost, private, link-local, reserved, and multicast
 HTTP targets, including hostnames that resolve to private addresses. The
 helpers only accept requests from `https://downloader.setotower.com` and keep
