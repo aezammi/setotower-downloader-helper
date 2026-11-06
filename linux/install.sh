@@ -7,7 +7,8 @@ mkdir -p "$BASE/tools" "$HOME/.config/systemd/user"
 
 if command -v apt-get >/dev/null 2>&1; then
   sudo apt-get update
-  sudo apt-get install -y curl python3 ffmpeg yt-dlp nodejs
+  sudo apt-get install -y curl python3 ffmpeg nodejs aria2
+  sudo apt-get install -y -t resolute-backports yt-dlp || sudo apt-get install -y yt-dlp
 else
   for tool in curl python3 ffmpeg yt-dlp node; do
     command -v "$tool" >/dev/null || { echo "$tool is required" >&2; exit 1; }

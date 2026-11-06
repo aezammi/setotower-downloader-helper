@@ -40,11 +40,16 @@ when the downloader connects and exits after five idle minutes.
 
 ## Windows install
 
-Download `helper.exe` from the downloader site and run it once. The current
-Windows release is a per-user tray helper and saves to `Downloads\\Setotower`.
-When shipping the HLS engine in a new Windows release, run
-`helper/build.ps1` on Windows; it rebuilds the signed tool archive hash in
-`BuildConfig.cs` before compiling the helper.
+Download `helper.exe` from the downloader site and run it once. The Windows
+helper is silent, per-user, loopback-only, and saves to `Downloads\\Setotower`.
+It exits after five idle minutes. When shipping the HLS engine in a new
+Windows release, run `helper/build.ps1` on Windows; it rebuilds the SHA-256
+tool archive hash in `BuildConfig.cs` before compiling the helper.
+
+Both helpers reject localhost, private, link-local, reserved, and multicast
+HTTP targets, including hostnames that resolve to private addresses. The
+helpers only accept requests from `https://downloader.setotower.com` and keep
+download bytes on the client device.
 
 ## Local host
 

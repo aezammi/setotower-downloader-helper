@@ -80,10 +80,13 @@ internal static class Helper {
             if(host!="127.0.0.1:"+Port||!cors){Reply(stream,403,new{error="Only the Setotower website may use this helper"},false);return;}
             if(request[0]=="OPTIONS"){Reply(stream,200,new{ok=true},true);return;}
             string route=request[1];
-            if(route=="/v1/health"&&request[0]=="GET"){Reply(stream,200,new{app="setotower-helper",version="1.0.0",state=toolState,error=toolError,token=Token},true);return;}
             string supplied;if(!headers.TryGetValue("X-Setotower-Token",out supplied)||supplied!=Token){Reply(stream,403,new{error="Reconnect the helper from the website"},true);return;}
+            if(route=="/v1/health"&&request[0]=="GET"){Reply(stream,200,new{app="setotower-helper",version="1.0.1",state=toolState,error=toolError,token=Token},true);return;}
             if(route.StartsWith("/v1/jobs/")&&request[0]=="GET"){
-                lock(Gate){Job j;if(!Jobs.TryGetValue(route.Substring(9),out j)){Reply(stream,404,new{error="Download not found"},true);return;}Reply(stream,200,new{id=j.Id,state=j.State,progress=j.Progress,file=j.File,error=j.Error},true);}return;
+                lock(Gate){Job j;if(!Jobs.TryGetValue(route.Substring(9),out j)){Reply(stream,404,new{error="Download not found"},true);return;}Reply(stream,200,PublicJob(j),true);}return;
+            }
+            if(route.StartsWith("/v1/jobs/")&&route.EndsWith("/cancel")&&request[0]=="POST"){
+                string id=route.Substring(9,route.Length-9-7);lock(Gate){Job j;if(!Jobs.TryGetValue(id,out j)){Reply(stream,404,new{error="Download not found"},true);return;}if(j.State=="complete"||j.State=="error"||j.State=="cancelled"){Reply(stream,409,PublicJob(j),true);return;}j.Cancelled=true;try{if(j.Process!=null&&!j.Process.HasExited)j.Process.Kill();}catch{}j.State="cancelled";j.Error="Download cancelled.";Reply(stream,200,PublicJob(j),true);}return;
             }
             if(toolState!="ready"){Reply(stream,503,new{error=toolState=="error"?toolError:"Preparing download tools. Please wait."},true);return;}
             if(request[0]!="POST"||(route!="/v1/info"&&route!="/v1/download")){Reply(stream,404,new{error="Unknown endpoint"},true);return;}
@@ -105,7 +108,8 @@ internal static class Helper {
     }}}
     static bool IsHls(Uri u){return (u.AbsolutePath.EndsWith(".m3u8",StringComparison.OrdinalIgnoreCase)||u.Query.IndexOf(".m3u8",StringComparison.OrdinalIgnoreCase)>=0)&&String.IsNullOrEmpty(u.UserInfo);}
     static bool UsesBrowserSession(Uri u){var host=u.Host.ToLowerInvariant();return host=="instagram.com"||host.EndsWith(".instagram.com")||host=="instagr.am"||host=="threads.net"||host.EndsWith(".threads.net");}
-    static void ValidateUrl(string url){Uri u;if(!Uri.TryCreate(url,UriKind.Absolute,out u)||(u.Scheme!="https"&&u.Scheme!="http")||!String.IsNullOrEmpty(u.UserInfo))throw new Exception("Paste a valid http or https link.");}
+    static void ValidateUrl(string url){Uri u;if(!Uri.TryCreate(url,UriKind.Absolute,out u)||(u.Scheme!="https"&&u.Scheme!="http")||!String.IsNullOrEmpty(u.UserInfo)||String.IsNullOrEmpty(u.Host))throw new Exception("Paste a valid http or https link.");var host=u.Host.TrimEnd('.').ToLowerInvariant();if(host=="localhost"||host=="localhost.localdomain"||host.EndsWith(".local"))throw new Exception("Local network URLs are not allowed.");IPAddress address;if(IPAddress.TryParse(host,out address)){if(!IsGlobal(address))throw new Exception("Private or local network URLs are not allowed.");return;}try{foreach(var resolved in Dns.GetHostAddresses(host))if(!IsGlobal(resolved))throw new Exception("Private or local network URLs are not allowed.");}catch(SocketException){/* Leave DNS failure to the downloader's normal error. */}}
+    static bool IsGlobal(IPAddress address){if(IPAddress.IsLoopback(address)||address.IsIPv6LinkLocal||address.IsIPv6SiteLocal||address.IsIPv6Multicast)return false;byte[] b=address.GetAddressBytes();if(address.AddressFamily==AddressFamily.InterNetwork){if(b[0]==0||b[0]>=224||b[0]==10||b[0]==127||b[0]==100&&b[1]>=64&&b[1]<=127||b[0]==169&&b[1]==254||b[0]==192&&b[1]==168||b[0]==172&&b[1]>=16&&b[1]<=31||b[0]==198&&b[1]>=18&&b[1]<=19)return false;}else if((b[0]&0xfe)==0xfc)return false;return true;}
     static string Quote(string s){
         var result=new StringBuilder();result.Append('"');int slashes=0;
         foreach(char c in s){if(c=='\\'){slashes++;continue;}if(c=='"'){result.Append('\\',slashes*2+1).Append('"');}else{result.Append('\\',slashes).Append(c);}slashes=0;}
@@ -121,9 +125,10 @@ internal static class Helper {
             return new{title=data["title"],thumbnail=data.ContainsKey("thumbnail")?data["thumbnail"]:null,uploader=data.ContainsKey("uploader")?data["uploader"]:null,duration=data.ContainsKey("duration_string")?data["duration_string"]:null,video=heights.Reverse().Select(h=>new{value=h.ToString(),label=h+"p MP4"}).ToArray(),audio=new[]{64,128,192,256,320}.Select(k=>new{value=k.ToString(),label=k+" kbps MP3"}).ToArray()};
         }
     }
+    static object PublicJob(Job j){return new{id=j.Id,state=j.State,progress=j.Progress,file=String.IsNullOrEmpty(j.File)?"":Path.GetFileName(j.File),error=j.Error};}
     static void Download(Job job,string url,string type,string quality){try{
         Directory.CreateDirectory(Destination);Uri uri;Uri.TryCreate(url,UriKind.Absolute,out uri);
-        if(IsHls(uri)){if(type!="mp4")throw new Exception("Prepared HLS sources currently support MP4 video only.");var output=Path.Combine(Destination,"setotower-download.mp4");var hlsArgs=new List<string>{Path.Combine(Tools,"cineb-hls.mjs"),"--url",url,"--output",output,"--ffmpeg",Path.Combine(Tools,"ffmpeg.exe"),"--connections","8"};using(var p=new Process{StartInfo=HlsCommand(hlsArgs)}){var errors=new StringBuilder();p.OutputDataReceived+=(s,e)=>{if(e.Data==null)return;lock(Gate){if(e.Data.StartsWith("SETOTOWER_FILE:"))job.File=e.Data.Substring(15);else if(e.Data.StartsWith("SETOTOWER_PROGRESS:"))job.Progress=e.Data.Substring(19);}};p.ErrorDataReceived+=(s,e)=>{if(e.Data==null)return;lock(errors){if(errors.Length>6000)errors.Clear();errors.AppendLine(e.Data);}};p.Start();p.BeginOutputReadLine();p.BeginErrorReadLine();p.WaitForExit();if(p.ExitCode!=0)throw new Exception(errors.ToString());if(String.IsNullOrEmpty(job.File)||!File.Exists(job.File)||new FileInfo(job.File).Length==0)throw new Exception("The HLS video could not be saved. Please retry.");lock(Gate){job.State="complete";job.Progress="Saved to Downloads\\Setotower";}return;}
+        if(IsHls(uri)){if(type!="mp4")throw new Exception("Prepared HLS sources currently support MP4 video only.");var output=Path.Combine(Destination,"setotower-download.mp4");var hlsArgs=new List<string>{Path.Combine(Tools,"cineb-hls.mjs"),"--url",url,"--output",output,"--ffmpeg",Path.Combine(Tools,"ffmpeg.exe"),"--connections","8"};using(var p=new Process{StartInfo=HlsCommand(hlsArgs)}){lock(Gate){job.Process=p;}var errors=new StringBuilder();p.OutputDataReceived+=(s,e)=>{if(e.Data==null)return;lock(Gate){if(e.Data.StartsWith("SETOTOWER_FILE:"))job.File=e.Data.Substring(15);else if(e.Data.StartsWith("SETOTOWER_PROGRESS:"))job.Progress=e.Data.Substring(19);}};p.ErrorDataReceived+=(s,e)=>{if(e.Data==null)return;lock(errors){if(errors.Length>6000)errors.Clear();errors.AppendLine(e.Data);}};p.Start();p.BeginOutputReadLine();p.BeginErrorReadLine();p.WaitForExit();if(job.Cancelled){CleanupCancelled(job);return;}if(p.ExitCode!=0)throw new Exception(errors.ToString());if(String.IsNullOrEmpty(job.File)||!File.Exists(job.File)||new FileInfo(job.File).Length==0)throw new Exception("The HLS video could not be saved. Please retry.");lock(Gate){job.State="complete";job.Progress="Saved to Downloads\\Setotower";}return;}
         }
         var args=BaseArgs();
         args.AddRange(new[]{"--newline","--progress","--no-simulate","--print","after_move:SETOTOWER_FILE:%(filepath)s","-o",Path.Combine(Destination,"%(title).150B [%(id)s].%(ext)s")});
@@ -133,11 +138,19 @@ internal static class Helper {
         using(var p=new Process{StartInfo=Command(args)}){var errors=new StringBuilder();
             p.OutputDataReceived+=(s,e)=>{if(e.Data==null)return;lock(Gate){if(e.Data.StartsWith("SETOTOWER_FILE:"))job.File=e.Data.Substring(15);else if(e.Data.Contains("[download]")||e.Data.Contains("[Merger]")||e.Data.Contains("[ExtractAudio]"))job.Progress=e.Data;}};
             p.ErrorDataReceived+=(s,e)=>{if(e.Data==null)return;lock(errors){if(errors.Length>6000)errors.Clear();errors.AppendLine(e.Data);}};
-            p.Start();p.BeginOutputReadLine();p.BeginErrorReadLine();p.WaitForExit();
+            lock(Gate){job.Process=p;}p.Start();p.BeginOutputReadLine();p.BeginErrorReadLine();p.WaitForExit();
+            if(job.Cancelled){CleanupCancelled(job);return;}
             if(p.ExitCode!=0)throw new Exception(errors.ToString());if(String.IsNullOrEmpty(job.File)||!System.IO.File.Exists(job.File)||new FileInfo(job.File).Length==0)throw new Exception("The video could not be saved. Please retry.");
             lock(Gate){job.State="complete";job.Progress="Saved to Downloads\\Setotower";}
         }
-    }catch(Exception e){lock(Gate){job.State="error";job.Error=Friendly(e.Message);}}finally{Interlocked.Exchange(ref active,0);}}
+    }catch(Exception e){lock(Gate){if(!job.Cancelled){job.State="error";job.Error=Friendly(e.Message);}}}finally{Interlocked.Exchange(ref active,0);}}
+    static void CleanupCancelled(Job job){try{
+        var fixedOutput=Path.Combine(Destination,"setotower-download.mp4");
+        if(File.Exists(fixedOutput)&&File.GetLastWriteTimeUtc(fixedOutput)>=job.Started)File.Delete(fixedOutput);
+        foreach(var pattern in new[]{"*.part","*.ytdl","*.aria2"})
+            foreach(var file in Directory.GetFiles(Destination,pattern))
+                if(File.GetLastWriteTimeUtc(file)>=job.Started)File.Delete(file);
+    }catch{}}
     static string Friendly(string message){if(message.Contains("not a bot"))return "YouTube requested verification on this connection. Open this video on YouTube and try again later.";if(message.Contains("private video"))return "This video is private.";if(message.Length>500)return "YouTube could not complete the request. Try another quality or retry later.";return message;}
-    class Job {public string Id,State,Progress,File="",Error="";}
+    class Job {public string Id,State,Progress,File="",Error="";public bool Cancelled;public DateTime Started=DateTime.UtcNow;public Process Process;}
 }

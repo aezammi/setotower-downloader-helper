@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Keep package metadata and archive member timestamps reproducible in CI and
+# local rebuilds. Callers may pin this to the source commit timestamp.
+SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-0}"
+export SOURCE_DATE_EPOCH
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="${1:-1.0.0}"
 WORK="$(mktemp -d)"
@@ -41,6 +46,7 @@ Description: Setotower silent on-demand download helper
  Downloads supported media directly to the local user's Downloads/Setotower folder.
  Includes the Cineb HLS engine and uses systemd socket activation.
 CONTROL
+find "$PKG" -exec touch --date="@${SOURCE_DATE_EPOCH}" {} +
 dpkg-deb --build --root-owner-group "$PKG" "$WORK/setotower-helper_${VERSION}_all.deb" >/dev/null
 
 mkdir -p "$ROOT/apt/pool" "$ROOT/apt/dists/stable/main/binary-all"
@@ -57,7 +63,7 @@ packages_gz="$ROOT/apt/dists/stable/main/binary-all/Packages.gz"
   echo 'Label: Setotower Downloader'
   echo 'Suite: stable'
   echo 'Codename: stable'
-  echo "Date: $(date -Ru)"
+  echo "Date: $(date -Ru -d "@${SOURCE_DATE_EPOCH}")"
   echo 'Architectures: all'
   echo 'Components: main'
   echo 'MD5Sum:'

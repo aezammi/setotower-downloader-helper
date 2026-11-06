@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, os, re, secrets, shutil, socket, socketserver, subprocess, tempfile, threading, time, urllib.parse
+import ipaddress, json, os, re, secrets, shutil, socket, socketserver, subprocess, tempfile, threading, time, urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -17,6 +17,92 @@ READY_SOURCES = {}
 BROWSER_SESSION_URLS = set()
 MAGNET_METADATA = {}
 BRIDGE = os.environ.get("SETOTOWER_CINEB_BRIDGE", "http://127.0.0.1:8765/api/resolve")
+MAX_JOBS = 32
+JOB_TTL = 3600
+PROCESSES = {}
+
+def probe_media(path):
+    """Return stream types and duration for a completed media file."""
+    probe = shutil.which("ffprobe") or "ffprobe"
+    command = [probe, "-v", "error", "-show_entries", "stream=codec_type:format=duration", "-of", "json", str(path)]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        raise ValueError("The downloaded file is not a valid media container.")
+    try:
+        data = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as error:
+        raise ValueError("The media validator returned invalid data.") from error
+    streams = {item.get("codec_type") for item in data.get("streams", []) if item.get("codec_type")}
+    duration = data.get("format", {}).get("duration")
+    return {"streams": sorted(streams), "duration": float(duration) if duration else None}
+
+def validate_completed_file(path, kind):
+    candidate = Path(path)
+    if not candidate.is_file() or candidate.stat().st_size == 0:
+        raise ValueError("The local download engine completed without producing a file.")
+    if candidate.suffix.lower() in {".m3u8", ".html", ".htm", ".json"}:
+        raise ValueError("The provider returned a playlist or webpage instead of a media file.")
+    media = probe_media(candidate)
+    streams = set(media["streams"])
+    required = "audio" if kind == "mp3" else "video"
+    if required not in streams:
+        raise ValueError("The downloaded file does not contain the requested media stream.")
+    return media
+
+def cleanup_partial_outputs(started_at):
+    """Remove only fresh temporary artifacts left by a failed job."""
+    if not DEST.exists(): return
+    for candidate in DEST.rglob("*"):
+        if not candidate.is_file() or candidate.stat().st_mtime < started_at: continue
+        if candidate.name.endswith((".part", ".ytdl", ".aria2")) or candidate.name == "setotower-download.mp4":
+            try: candidate.unlink()
+            except OSError: pass
+
+def is_active():
+    with LOCK:
+        return ACTIVE
+
+def claim_active():
+    global ACTIVE
+    with LOCK:
+        if ACTIVE:
+            return False
+        ACTIVE = True
+        return True
+
+def release_active():
+    global ACTIVE
+    with LOCK:
+        ACTIVE = False
+
+def public_job(job):
+    """Return only safe, client-facing job fields."""
+    result = {key: job.get(key) for key in ("id", "state", "current", "total", "percent", "error", "media")}
+    path = job.get("file")
+    result["file"] = Path(path).name if path else ""
+    return result
+
+def prune_jobs():
+    cutoff = time.time() - JOB_TTL
+    with LOCK:
+        stale = [key for key, item in JOBS.items() if item.get("finished_at", 0) and item["finished_at"] < cutoff]
+        for key in stale: JOBS.pop(key, None)
+
+def cancel_job(job_id):
+    with LOCK:
+        job = JOBS.get(job_id)
+        if not job or job.get("state") in ("complete", "error", "cancelled"):
+            return None
+        job["cancel_requested"] = True
+        process = PROCESSES.get(job_id)
+    if process and process.poll() is None:
+        try: process.terminate()
+        except OSError: pass
+    return job
+
+def cancellation_requested(job_id):
+    with LOCK:
+        return bool(JOBS.get(job_id, {}).get("cancel_requested"))
 
 def json_body(handler, status, value):
     raw = json.dumps(value).encode()
@@ -33,7 +119,17 @@ def json_body(handler, status, value):
 def valid_url(url):
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme == "magnet": return bool(urllib.parse.parse_qs(parsed.query).get("xt"))
-    return parsed.scheme in ("http", "https") and not parsed.username and not parsed.password
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password: return False
+    host = parsed.hostname.rstrip(".").lower()
+    if host in {"localhost", "localhost.localdomain"} or host.endswith(".local"): return False
+    try:
+        addresses = [ipaddress.ip_address(host)]
+    except ValueError:
+        try:
+            addresses = [ipaddress.ip_address(item[4][0]) for item in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)]
+        except socket.gaierror:
+            addresses = []
+    return not addresses or all(address.is_global for address in addresses)
 
 def is_magnet(url):
     return urllib.parse.urlparse(url).scheme.lower() == "magnet"
@@ -169,6 +265,7 @@ def cineb_info(url, data=None):
 
 def run_job(job, url, kind, quality, headers):
     global ACTIVE
+    started_at = time.time()
     try:
         DEST.mkdir(parents=True, exist_ok=True)
         title = "setotower-download"
@@ -183,11 +280,18 @@ def run_job(job, url, kind, quality, headers):
                 if not indices: raise ValueError("Choose at least one torrent file to download.")
                 cmd[-1:-1] = ["--select-file", ",".join(indices)]
             process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            with LOCK: PROCESSES[job["id"]] = process
             for line in process.stdout:
+                if cancellation_requested(job["id"]):
+                    process.terminate()
+                    break
                 match = re.search(r"\((\d+)%\)", line)
                 if match:
                     job["percent"] = int(match.group(1)); job["current"] = job["percent"]; job["total"] = 100
             code = process.wait()
+            if cancellation_requested(job["id"]):
+                job.update(state="cancelled", error="Download cancelled.")
+                return
             if code != 0: raise RuntimeError("The torrent could not be downloaded. It may have no active peers.")
             files = [path for path in DEST.rglob("*") if path.is_file() and not path.name.endswith(".aria2") and path.stat().st_mtime >= started]
             if files: job["file"] = str(files[0])
@@ -211,7 +315,11 @@ def run_job(job, url, kind, quality, headers):
             if url in BROWSER_SESSION_URLS: cmd += ["--cookies-from-browser", "brave"]
             cmd += ["--", url]
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        with LOCK: PROCESSES[job["id"]] = process
         for line in process.stdout:
+            if cancellation_requested(job["id"]):
+                process.terminate()
+                break
             line = line.strip()
             if line.startswith("SETOTOWER_FILE:"): job["file"] = line.split(":", 1)[1]
             elif line.startswith("SETOTOWER_HLS:"):
@@ -226,17 +334,25 @@ def run_job(job, url, kind, quality, headers):
                 if match:
                     job["percent"] = min(100, max(0, round(float(match.group(1))))); job["current"] = job["percent"]; job["total"] = 100
         code = process.wait()
+        if cancellation_requested(job["id"]):
+            job.update(state="cancelled", error="Download cancelled.")
+            return
         if code != 0: raise RuntimeError("The local download engine could not complete the file.")
         if source_url.lower().split("?", 1)[0].endswith(".m3u8") and not job.get("file"):
             candidate = DEST / "setotower-download.mp4"
             if candidate.exists(): job["file"] = str(candidate)
-        if not job.get("file") or not Path(job["file"]).exists() or Path(job["file"]).stat().st_size == 0:
-            raise RuntimeError("The local download engine completed without producing a file.")
+        media = validate_completed_file(job.get("file", ""), kind)
+        job["media"] = media
         job.update(state="complete", current=job.get("total", 100), total=job.get("total", 100), percent=100)
     except Exception as error:
         job.update(state="error", error=str(error))
+        cleanup_partial_outputs(started_at)
     finally:
-        ACTIVE = False
+        if job.get("state") == "cancelled": cleanup_partial_outputs(started_at)
+        with LOCK:
+            PROCESSES.pop(job.get("id"), None)
+            if job.get("state") in ("complete", "error", "cancelled"): job["finished_at"] = time.time()
+        release_active()
 
 class Handler(BaseHTTPRequestHandler):
     def _allowed(self):
@@ -247,20 +363,31 @@ class Handler(BaseHTTPRequestHandler):
         LAST_ACTIVITY = time.monotonic()
         parsed = urllib.parse.urlparse(self.path)
         if not self._allowed(): return json_body(self, 403, {"error": "Only downloader.setotower.com may use this helper."})
-        if parsed.path == "/v1/health": return json_body(self, 200, {"app": "setotower-helper", "version": "linux-1.0.3", "state": "ready", "token": TOKEN})
+        if parsed.path == "/v1/health": return json_body(self, 200, {"app": "setotower-helper", "version": "linux-1.0.7", "state": "ready", "token": TOKEN})
         if not self.headers.get("X-Setotower-Token") == TOKEN: return json_body(self, 403, {"error": "Reconnect the helper from the website."})
         if parsed.path.startswith("/v1/jobs/"):
-            job = JOBS.get(parsed.path.rsplit("/", 1)[-1])
-            return json_body(self, 200 if job else 404, job or {"error": "Download not found."})
+            with LOCK:
+                job = JOBS.get(parsed.path.rsplit("/", 1)[-1])
+            return json_body(self, 200 if job else 404, public_job(job) if job else {"error": "Download not found."})
         return json_body(self, 404, {"error": "Unknown endpoint."})
     def do_POST(self):
-        global ACTIVE, LAST_ACTIVITY
+        global LAST_ACTIVITY
         LAST_ACTIVITY = time.monotonic()
         if not self._allowed() or self.headers.get("X-Setotower-Token") != TOKEN: return json_body(self, 403, {"error": "Reconnect the helper from the website."})
-        if ACTIVE: return json_body(self, 429, {"error": "Another download or lookup is running."})
-        length = int(self.headers.get("Content-Length", "0"))
+        if self.path.startswith("/v1/jobs/") and self.path.endswith("/cancel"):
+            job = cancel_job(self.path.split("/")[-2])
+            return json_body(self, 200 if job else 404, public_job(job) if job else {"error": "Download not found or already finished."})
+        if is_active(): return json_body(self, 429, {"error": "Another download or lookup is running."})
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            return json_body(self, 400, {"error": "Invalid request size."})
         if length < 1 or length > 16384: return json_body(self, 400, {"error": "Invalid request size."})
-        data = json.loads(self.rfile.read(length))
+        try:
+            data = json.loads(self.rfile.read(length))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return json_body(self, 400, {"error": "Request body must be valid JSON."})
+        if not isinstance(data, dict): return json_body(self, 400, {"error": "Request body must be a JSON object."})
         url = str(data.get("url", "")); kind = str(data.get("type", "mp4")); quality = str(data.get("quality", "best"))
         if not valid_url(url): return json_body(self, 400, {"error": "Invalid media URL."})
         if self.path == "/v1/info":
@@ -270,12 +397,16 @@ class Handler(BaseHTTPRequestHandler):
                 return json_body(self, 200, hls_info(url) if url.lower().split("?", 1)[0].endswith(".m3u8") else ytdlp_info(url))
             except ValueError as error: return json_body(self, 422, {"error": str(error)})
         if self.path != "/v1/download": return json_body(self, 404, {"error": "Unknown endpoint."})
-        ACTIVE = True
+        if not claim_active(): return json_body(self, 429, {"error": "Another download or lookup is running."})
         job = {"id": secrets.token_hex(16), "state": "downloading", "current": 0, "total": 0, "percent": 0, "file": "", "error": ""}
-        JOBS[job["id"]] = job
+        with LOCK:
+            JOBS[job["id"]] = job
+            finished = [key for key, item in JOBS.items() if item.get("state") in ("complete", "error", "cancelled") and key != job["id"]]
+            for key in finished[:max(0, len(JOBS) - MAX_JOBS)]:
+                JOBS.pop(key, None)
         job["request"] = data
         threading.Thread(target=run_job, args=(job, url, kind, quality, data.get("headers", {})), daemon=True).start()
-        json_body(self, 202, job)
+        json_body(self, 202, public_job(job))
     def log_message(self, *_): pass
 
 class ActivatedServer(socketserver.ThreadingMixIn, HTTPServer):
@@ -297,7 +428,8 @@ def main():
 def idle_exit(server):
     while True:
         time.sleep(30)
-        if not ACTIVE and time.monotonic() - LAST_ACTIVITY > 300:
+        prune_jobs()
+        if not is_active() and time.monotonic() - LAST_ACTIVITY > 300:
             server.shutdown(); return
 
 if __name__ == "__main__": main()
