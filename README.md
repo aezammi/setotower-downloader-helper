@@ -47,6 +47,10 @@ curl -fsSL https://downloader.setotower.com/helper/linux/uninstall.sh | bash
 The script removes only the helper units/runtime files and preserves
 `~/Downloads/Setotower`.
 
+After installation, run `bash linux/verify-install.sh` for a read-only check
+of the helper files, systemd units, socket state, and local health endpoint.
+It does not start, stop, enable, or remove anything.
+
 ## Windows install
 
 Download `helper.exe` from the downloader site and run it once. The Windows
