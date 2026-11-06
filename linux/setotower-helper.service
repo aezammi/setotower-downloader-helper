@@ -7,7 +7,7 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-ExecStart=%h/.local/share/setotower-helper/setotower-helper.py
+ExecStart=/usr/bin/python3 %h/.local/share/setotower-helper/setotower-helper.py
 WorkingDirectory=%h/.local/share/setotower-helper
 NoNewPrivileges=true
 PrivateTmp=true
