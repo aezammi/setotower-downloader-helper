@@ -128,7 +128,7 @@ internal static class Helper {
     static object PublicJob(Job j){return new{id=j.Id,state=j.State,progress=j.Progress,file=String.IsNullOrEmpty(j.File)?"":Path.GetFileName(j.File),error=j.Error};}
     static void Download(Job job,string url,string type,string quality){try{
         Directory.CreateDirectory(Destination);Uri uri;Uri.TryCreate(url,UriKind.Absolute,out uri);
-        if(IsHls(uri)){if(type!="mp4")throw new Exception("Prepared HLS sources currently support MP4 video only.");var output=Path.Combine(Destination,"setotower-download.mp4");var hlsArgs=new List<string>{Path.Combine(Tools,"cineb-hls.mjs"),"--url",url,"--output",output,"--ffmpeg",Path.Combine(Tools,"ffmpeg.exe"),"--connections","8"};using(var p=new Process{StartInfo=HlsCommand(hlsArgs)}){lock(Gate){job.Process=p;}var errors=new StringBuilder();p.OutputDataReceived+=(s,e)=>{if(e.Data==null)return;lock(Gate){if(e.Data.StartsWith("SETOTOWER_FILE:"))job.File=e.Data.Substring(15);else if(e.Data.StartsWith("SETOTOWER_PROGRESS:"))job.Progress=e.Data.Substring(19);}};p.ErrorDataReceived+=(s,e)=>{if(e.Data==null)return;lock(errors){if(errors.Length>6000)errors.Clear();errors.AppendLine(e.Data);}};p.Start();p.BeginOutputReadLine();p.BeginErrorReadLine();p.WaitForExit();if(job.Cancelled){CleanupCancelled(job);return;}if(p.ExitCode!=0)throw new Exception(errors.ToString());if(String.IsNullOrEmpty(job.File)||!File.Exists(job.File)||new FileInfo(job.File).Length==0)throw new Exception("The HLS video could not be saved. Please retry.");lock(Gate){job.State="complete";job.Progress="Saved to Downloads\\Setotower";}return;}
+        if(IsHls(uri)){if(type!="mp4")throw new Exception("Prepared HLS sources currently support MP4 video only.");var output=Path.Combine(Destination,"setotower-download.mp4");var hlsArgs=new List<string>{Path.Combine(Tools,"cineb-hls.mjs"),"--url",url,"--output",output,"--ffmpeg",Path.Combine(Tools,"ffmpeg.exe"),"--connections","8"};using(var p=new Process{StartInfo=HlsCommand(hlsArgs)}){lock(Gate){job.Process=p;}var errors=new StringBuilder();p.OutputDataReceived+=(s,e)=>{if(e.Data==null)return;lock(Gate){if(e.Data.StartsWith("SETOTOWER_FILE:"))job.File=e.Data.Substring(15);else if(e.Data.StartsWith("SETOTOWER_PROGRESS:"))job.Progress=e.Data.Substring(19);}};p.ErrorDataReceived+=(s,e)=>{if(e.Data==null)return;lock(errors){if(errors.Length>6000)errors.Clear();errors.AppendLine(e.Data);}};p.Start();p.BeginOutputReadLine();p.BeginErrorReadLine();p.WaitForExit();if(job.Cancelled){CleanupCancelled(job);return;}if(p.ExitCode!=0)throw new Exception(errors.ToString());if(String.IsNullOrEmpty(job.File)||!File.Exists(job.File)||new FileInfo(job.File).Length==0)throw new Exception("The HLS video could not be saved. Please retry.");ValidateCompletedFile(job.File,type);lock(Gate){job.State="complete";job.Progress="Saved to Downloads\\Setotower";}return;}
         }
         var args=BaseArgs();
         args.AddRange(new[]{"--newline","--progress","--no-simulate","--print","after_move:SETOTOWER_FILE:%(filepath)s","-o",Path.Combine(Destination,"%(title).150B [%(id)s].%(ext)s")});
@@ -140,10 +140,20 @@ internal static class Helper {
             p.ErrorDataReceived+=(s,e)=>{if(e.Data==null)return;lock(errors){if(errors.Length>6000)errors.Clear();errors.AppendLine(e.Data);}};
             lock(Gate){job.Process=p;}p.Start();p.BeginOutputReadLine();p.BeginErrorReadLine();p.WaitForExit();
             if(job.Cancelled){CleanupCancelled(job);return;}
-            if(p.ExitCode!=0)throw new Exception(errors.ToString());if(String.IsNullOrEmpty(job.File)||!System.IO.File.Exists(job.File)||new FileInfo(job.File).Length==0)throw new Exception("The video could not be saved. Please retry.");
+            if(p.ExitCode!=0)throw new Exception(errors.ToString());if(String.IsNullOrEmpty(job.File)||!System.IO.File.Exists(job.File)||new FileInfo(job.File).Length==0)throw new Exception("The video could not be saved. Please retry.");ValidateCompletedFile(job.File,type);
             lock(Gate){job.State="complete";job.Progress="Saved to Downloads\\Setotower";}
         }
     }catch(Exception e){lock(Gate){if(!job.Cancelled){job.State="error";job.Error=Friendly(e.Message);}}}finally{Interlocked.Exchange(ref active,0);}}
+    static void ValidateCompletedFile(string path,string type){
+        string extension=Path.GetExtension(path).ToLowerInvariant();
+        if(extension==".m3u8"||extension==".html"||extension==".htm"||extension==".json")throw new Exception("The provider returned a playlist or webpage instead of a media file.");
+        var probe=new ProcessStartInfo(Path.Combine(Tools,"ffmpeg.exe"),"-hide_banner -i "+Quote(path)){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardErrorEncoding=Encoding.UTF8,StandardOutputEncoding=Encoding.UTF8,WorkingDirectory=Home};
+        string output;
+        using(var p=Process.Start(probe)){output=p.StandardError.ReadToEnd()+p.StandardOutput.ReadToEnd();p.WaitForExit();}
+        if(Regex.IsMatch(output,"Invalid data found|No such file",RegexOptions.IgnoreCase))throw new Exception("The downloaded file is not a valid media container.");
+        string stream=type=="mp3"?"Audio":"Video";
+        if(!Regex.IsMatch(output,"Stream \\#\\d+:\\d+.*"+stream+":",RegexOptions.IgnoreCase|RegexOptions.Singleline))throw new Exception("The downloaded file does not contain the requested media stream.");
+    }
     static void CleanupCancelled(Job job){try{
         var fixedOutput=Path.Combine(Destination,"setotower-download.mp4");
         if(File.Exists(fixedOutput)&&File.GetLastWriteTimeUtc(fixedOutput)>=job.Started)File.Delete(fixedOutput);
