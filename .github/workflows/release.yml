@@ -1,0 +1,102 @@
+name: Helper release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Debian packaging tools
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y dpkg-dev
+      - name: Build reproducible Debian package
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          VERSION="${VERSION#v}"
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" \
+            bash linux/build-deb.sh "$VERSION"
+          mkdir -p release-assets
+          cp "apt/pool/setotower-helper_${VERSION}_all.deb" release-assets/
+          cp apt/dists/stable/Release release-assets/setotower-helper-Release
+          cp apt/dists/stable/main/binary-all/Packages.gz release-assets/setotower-helper-Packages.gz
+          sha256sum release-assets/* > release-assets/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: setotower-linux-helper
+          path: release-assets/
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 'lts/*'
+      - name: Install pinned build tools
+        shell: powershell
+        run: |
+          $ffmpegZip = Join-Path $env:RUNNER_TEMP 'ffmpeg-release-essentials.zip'
+          $ffmpegExtract = Join-Path $env:RUNNER_TEMP 'ffmpeg'
+          Invoke-WebRequest `
+            -Uri 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip' `
+            -OutFile $ffmpegZip
+          Expand-Archive -Path $ffmpegZip -DestinationPath $ffmpegExtract -Force
+          $ffmpegBinary = Get-ChildItem -Path $ffmpegExtract -Recurse -Filter 'ffmpeg.exe' | Select-Object -First 1
+          if ($null -eq $ffmpegBinary) { throw 'FFmpeg was not downloaded' }
+          $ffmpegBin = $ffmpegBinary.Directory.FullName
+          $ytDlpVersion = '2026.10.26'
+          $ytDlpPath = Join-Path $env:RUNNER_TEMP 'yt-dlp.exe'
+          Invoke-WebRequest `
+            -Uri "https://github.com/yt-dlp/yt-dlp/releases/download/$ytDlpVersion/yt-dlp.exe" `
+            -OutFile $ytDlpPath
+          Add-Content -Path $env:GITHUB_PATH -Value (Split-Path $ytDlpPath)
+          Add-Content -Path $env:GITHUB_PATH -Value $ffmpegBin
+          $env:Path = "$(Split-Path $ytDlpPath);$ffmpegBin;$env:Path"
+          if (-not (Get-Command yt-dlp.exe -ErrorAction SilentlyContinue)) { throw 'yt-dlp was not installed' }
+          if (-not (Get-Command ffmpeg.exe -ErrorAction SilentlyContinue)) { throw 'FFmpeg was not installed' }
+          if (-not (Get-Command node.exe -ErrorAction SilentlyContinue)) { throw 'Node.js was not installed' }
+      - name: Build Windows helper
+        shell: powershell
+        run: .\windows\build.ps1
+      - name: Verify and checksum Windows release
+        shell: powershell
+        run: |
+          if (-not (Test-Path windows\release\helper.exe)) { throw 'helper.exe was not produced' }
+          if (-not (Test-Path windows\release\tools-v1.zip)) { throw 'tools-v1.zip was not produced' }
+          Get-FileHash windows\release\helper.exe,windows\release\tools-v1.zip -Algorithm SHA256 |
+            Format-Table -AutoSize
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          Copy-Item windows\release\helper.exe,windows\release\tools-v1.zip release-assets\
+          Get-FileHash release-assets\helper.exe,release-assets\tools-v1.zip -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLowerInvariant())  $($_.Path | Split-Path -Leaf)" } |
+            Set-Content release-assets\SHA256SUMS-windows.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: setotower-windows-helper
+          path: release-assets/
+
+  publish:
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: release-assets
+          pattern: setotower-*-helper
+          merge-multiple: true
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha256sum release-assets/* > release-assets/SHA256SUMS-all.txt
+          gh release create "$GITHUB_REF_NAME" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Setotower Downloader Helper $GITHUB_REF_NAME" \
+            --generate-notes
