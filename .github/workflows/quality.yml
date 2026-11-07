@@ -30,7 +30,21 @@ jobs:
       - name: Install pinned build tools
         shell: powershell
         run: |
-          choco install yt-dlp ffmpeg nodejs-lts -y --no-progress
+          $packages = @('yt-dlp', 'ffmpeg', 'nodejs-lts')
+          foreach ($package in $packages) {
+            $installed = $false
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              choco install $package -y --no-progress
+              if ($LASTEXITCODE -eq 0) {
+                $installed = $true
+                break
+              }
+              if ($attempt -lt 3) {
+                Start-Sleep -Seconds (10 * $attempt)
+              }
+            }
+            if (-not $installed) { throw "Chocolatey could not install $package after 3 attempts" }
+          }
           $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
           $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
           $env:Path = "$machinePath;$userPath"
