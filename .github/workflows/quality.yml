@@ -52,7 +52,13 @@ jobs:
           $ffmpegBin = $ffmpegBinary.Directory.FullName
           $ffmpegRoot = $ffmpegBinary.Directory.Parent.FullName
           $ffmpegLicense = Join-Path $ffmpegRoot 'LICENSE.txt'
-          if (-not (Test-Path $ffmpegLicense)) { throw 'FFmpeg license file was not found in the downloaded release' }
+          if (-not (Test-Path $ffmpegLicense)) {
+            $licenseSource = Get-ChildItem -Path $ffmpegRoot -Recurse -File |
+              Where-Object { $_.Name -match '^LICENSE(\.|$)' } |
+              Select-Object -First 1
+            if ($null -eq $licenseSource) { throw 'FFmpeg license file was not found in the downloaded release' }
+            Copy-Item -LiteralPath $licenseSource.FullName -Destination $ffmpegLicense -Force
+          }
           $ytDlpVersion = '2026.10.26'
           $ytDlpPath = Join-Path $env:RUNNER_TEMP 'yt-dlp.exe'
           Invoke-WebRequest `
