@@ -62,7 +62,8 @@ internal static class Helper {
             File.Delete(pack);toolState="ready";
         }catch(Exception e){toolState="error";toolError=e.Message;}
     }}
-    static async Task Serve(){while(true){TcpClient c;try{c=await listener.AcceptTcpClientAsync();}catch{return;}Task.Run(()=>Handle(c)).ContinueWith(t=>{if(t.IsFaulted)System.Diagnostics.Debug.WriteLine(t.Exception);},TaskContinuationOptions.OnlyOnFaulted);}}
+    static void FireAndForget(Action work){Task task=Task.Run(work);Task observe=task.ContinueWith(t=>{if(t.IsFaulted)System.Diagnostics.Debug.WriteLine(t.Exception);},TaskContinuationOptions.OnlyOnFaulted);GC.KeepAlive(observe);}
+    static async Task Serve(){while(true){TcpClient c;try{c=await listener.AcceptTcpClientAsync();}catch{return;}FireAndForget(()=>Handle(c));}}
     static void Reply(NetworkStream stream,int status,object payload,bool cors){
         byte[] body=Encoding.UTF8.GetBytes(Json().Serialize(payload));
         string h="HTTP/1.1 "+status+" Response\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: "+body.Length+"\r\nCache-Control: no-store\r\nConnection: close\r\n";
