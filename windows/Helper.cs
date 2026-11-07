@@ -62,7 +62,7 @@ internal static class Helper {
             File.Delete(pack);toolState="ready";
         }catch(Exception e){toolState="error";toolError=e.Message;}
     }}
-    static async Task Serve(){while(true){TcpClient c;try{c=await listener.AcceptTcpClientAsync();}catch{return;}Task.Run(()=>Handle(c));}}
+    static async Task Serve(){while(true){TcpClient c;try{c=await listener.AcceptTcpClientAsync();}catch{return;}_ = Task.Run(()=>Handle(c));}}
     static void Reply(NetworkStream stream,int status,object payload,bool cors){
         byte[] body=Encoding.UTF8.GetBytes(Json().Serialize(payload));
         string h="HTTP/1.1 "+status+" Response\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: "+body.Length+"\r\nCache-Control: no-store\r\nConnection: close\r\n";
