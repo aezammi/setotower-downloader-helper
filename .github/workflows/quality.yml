@@ -33,21 +33,26 @@ jobs:
       - name: Install pinned build tools
         shell: powershell
         run: |
-          $packages = @('ffmpeg')
-          foreach ($package in $packages) {
-            $installed = $false
-            for ($attempt = 1; $attempt -le 3; $attempt++) {
-              choco install $package -y --no-progress
-              if ($LASTEXITCODE -eq 0) {
-                $installed = $true
-                break
-              }
-              if ($attempt -lt 3) {
-                Start-Sleep -Seconds (10 * $attempt)
-              }
+          $ffmpegZip = Join-Path $env:RUNNER_TEMP 'ffmpeg-release-essentials.zip'
+          $ffmpegExtract = Join-Path $env:RUNNER_TEMP 'ffmpeg'
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+              Invoke-WebRequest `
+                -Uri 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip' `
+                -OutFile $ffmpegZip
+              Expand-Archive -Path $ffmpegZip -DestinationPath $ffmpegExtract -Force
+              break
+            } catch {
+              if ($attempt -eq 3) { throw }
+              Start-Sleep -Seconds (10 * $attempt)
             }
-            if (-not $installed) { throw "Chocolatey could not install $package after 3 attempts" }
           }
+          $ffmpegBinary = Get-ChildItem -Path $ffmpegExtract -Recurse -Filter 'ffmpeg.exe' | Select-Object -First 1
+          if ($null -eq $ffmpegBinary) { throw 'Pinned FFmpeg release was not downloaded' }
+          $ffmpegBin = $ffmpegBinary.Directory.FullName
+          $ffmpegRoot = $ffmpegBinary.Directory.Parent.FullName
+          $ffmpegLicense = Join-Path $ffmpegRoot 'LICENSE.txt'
+          if (-not (Test-Path $ffmpegLicense)) { throw 'FFmpeg license file was not found in the downloaded release' }
           $ytDlpVersion = '2026.10.26'
           $ytDlpPath = Join-Path $env:RUNNER_TEMP 'yt-dlp.exe'
           Invoke-WebRequest `
@@ -56,9 +61,10 @@ jobs:
           if (-not (Test-Path $ytDlpPath)) { throw 'Pinned yt-dlp release was not downloaded' }
           $env:GITHUB_PATH | Out-Null
           Add-Content -Path $env:GITHUB_PATH -Value (Split-Path $ytDlpPath)
+          Add-Content -Path $env:GITHUB_PATH -Value $ffmpegBin
           $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
           $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-          $env:Path = "$(Split-Path $ytDlpPath);$machinePath;$userPath;$env:PATH"
+          $env:Path = "$(Split-Path $ytDlpPath);$ffmpegBin;$machinePath;$userPath;$env:PATH"
           Get-Command yt-dlp.exe
           Get-Command ffmpeg.exe
           Get-Command node.exe
