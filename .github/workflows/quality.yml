@@ -27,10 +27,13 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 'lts/*'
       - name: Install pinned build tools
         shell: powershell
         run: |
-          $packages = @('yt-dlp', 'ffmpeg', 'nodejs-lts')
+          $packages = @('ffmpeg')
           foreach ($package in $packages) {
             $installed = $false
             for ($attempt = 1; $attempt -le 3; $attempt++) {
@@ -45,9 +48,17 @@ jobs:
             }
             if (-not $installed) { throw "Chocolatey could not install $package after 3 attempts" }
           }
+          $ytDlpVersion = '2026.10.26'
+          $ytDlpPath = Join-Path $env:RUNNER_TEMP 'yt-dlp.exe'
+          Invoke-WebRequest `
+            -Uri "https://github.com/yt-dlp/yt-dlp/releases/download/$ytDlpVersion/yt-dlp.exe" `
+            -OutFile $ytDlpPath
+          if (-not (Test-Path $ytDlpPath)) { throw 'Pinned yt-dlp release was not downloaded' }
+          $env:GITHUB_PATH | Out-Null
+          Add-Content -Path $env:GITHUB_PATH -Value (Split-Path $ytDlpPath)
           $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
           $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-          $env:Path = "$machinePath;$userPath"
+          $env:Path = "$(Split-Path $ytDlpPath);$machinePath;$userPath;$env:PATH"
           Get-Command yt-dlp.exe
           Get-Command ffmpeg.exe
           Get-Command node.exe
