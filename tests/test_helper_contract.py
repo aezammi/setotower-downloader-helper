@@ -20,6 +20,10 @@ class HelperContractTests(unittest.TestCase):
         self.assertIn('SETOTOWER_PROGRESS:\\s*(\\d+)\\s*/\\s*(\\d+)', source)
         self.assertIn("job.Current=job.Total=job.Percent=100", source)
 
+    def test_windows_dns_fail_closed(self):
+        source = WINDOWS_HELPER.read_text(encoding="utf-8")
+        self.assertIn('catch(SocketException){throw new Exception("The hostname could not be resolved safely.");}', source)
+
     def test_public_dns_is_allowed(self):
         public = [(None, None, None, None, ("93.184.216.34", 0))]
         with patch.object(helper.socket, "getaddrinfo", return_value=public):
